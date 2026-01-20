@@ -11,15 +11,16 @@ Bugs are now tracked in GitHub Issues: https://github.com/EverlastEngineering/Dr
 
 ## Open Bugs (Not Yet in GitHub)
 
-### Cymbals stem is empty for Thunderstruck
-- **Status**: Closed (Not a Bug)
+### Cymbals appeared missing due to --maxtime truncation
+- **Status**: Closed (User Error / Testing Bug)
 - **Priority**: N/A
-- **Description**: Cymbals stem shows as silent (max amplitude 0.000443) for AC_DC_Thunderstruck_Drums track
-- **Root Cause**: The source audio separation (MDX23C) didn't extract cymbal content for this track
-  - Both `cleaned/` and `stems/` folders have empty cymbals
-  - This is separation model behavior, not a detection bug
-- **Note 27 Mystery**: MIDI files contain note 27 which is NOT cymbals - it's a technical anchor note added at time 0 for DAW alignment (see `stems_to_midi/midi.py:64`)
-- **Resolution**: Track genuinely has no separable cymbal content
+- **Description**: Cymbals appeared silent when testing with `--maxtime 60`
+- **Root Cause**: Thunderstruck cymbals don't start until ~90 seconds (intro is all hi-hat)
+  - 0-90s: max amplitude 0.000488 (effectively silent)
+  - 90s+: max amplitude 0.31-0.56 (actual cymbal content)
+- **Resolution**: Running full conversion (no maxtime) detects 77 cymbal events
+- **Lesson**: When troubleshooting, run full conversion first, then use maxtime for faster iteration only after confirming content exists
+- **Note 27**: Still just a technical anchor note for DAW alignment (see `stems_to_midi/midi.py:64`)
 
 ---
 

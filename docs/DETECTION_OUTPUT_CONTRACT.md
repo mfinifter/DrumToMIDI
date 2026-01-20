@@ -200,15 +200,26 @@ This allows visual inspection in a DAW to see what the detector found and why ce
 
 ## Known Limitations
 
-### Individual vs Full Pipeline
+### --maxtime Truncation Pitfall
 
-Running stems individually (`--stems cymbals`) may produce different results than running all stems together through the WebUI. Potential causes:
+The `--maxtime` flag truncates audio for faster testing, but **may miss content that appears later in the track**.
 
-1. **Stem source folders** - CLI prefers `cleaned/` over `stems/` 
-2. **Cleaned stems** - Post-sidechain audio may have content redistributed
-3. **Pipeline state** - Some inter-stem logic may not run in individual mode
+**Example:** Thunderstruck cymbals don't appear until ~90 seconds (intro is all hi-hat):
+```
+0-90s:  max amplitude 0.0005 (effectively silent)
+90s+:   max amplitude 0.31-0.56 (actual content)
+```
 
-When debugging, verify which stem source is being used:
+Running `--maxtime 60` shows "Audio is silent, skipping..." but the full track has 77 cymbal hits.
+
+**Best Practice:**
+1. Run full conversion first (no maxtime) to confirm what content exists
+2. Use `--maxtime` only for faster iteration after confirming content location
+3. For songs with long intros, content may not appear until minutes in
+
+### Stem Source Folders
+
+CLI prefers `cleaned/` over `stems/` folders. When debugging, verify which source is used:
 ```
 Using stems from: /path/to/project/cleaned  # or /path/to/project/stems
 ```
