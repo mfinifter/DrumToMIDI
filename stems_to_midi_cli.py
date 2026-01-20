@@ -22,7 +22,7 @@ import sys
 
 # Import modules (thin orchestration layer)
 from stems_to_midi.config import DrumMapping
-from stems_to_midi.midi import create_midi_file
+from stems_to_midi.midi import create_midi_file, save_analysis_sidecar
 from stems_to_midi.processing_shell import process_stem_to_midi
 
 # Import project manager
@@ -286,6 +286,9 @@ def _process_stems_to_midi(
                 track_name=f"Drums - {base_name}",
                 config=config
             )
+            
+            # Save analysis sidecar with spectral data (Detection Output Contract)
+            save_analysis_sidecar(events_by_stem, midi_path, tempo=tempo)
             
             # Progress: after MIDI creation (90-100% of total)
             midi_progress = int(90 + (song_idx / total_songs) * 10)

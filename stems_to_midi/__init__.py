@@ -5,7 +5,7 @@ This package provides functionality to convert separated drum stems to MIDI trac
 """
 
 from .config import load_config, DrumMapping
-from .midi import create_midi_file, read_midi_notes
+from .midi import create_midi_file, read_midi_notes, save_analysis_sidecar, load_analysis_sidecar
 from .learning import learn_threshold_from_midi, save_calibrated_config
 from .processing_shell import process_stem_to_midi
 
@@ -14,6 +14,8 @@ __all__ = [
     'DrumMapping',
     'create_midi_file',
     'read_midi_notes',
+    'save_analysis_sidecar',
+    'load_analysis_sidecar',
     'learn_threshold_from_midi',
     'save_calibrated_config',
     'process_stem_to_midi',

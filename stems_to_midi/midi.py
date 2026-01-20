@@ -2,19 +2,31 @@
 MIDI File Operations Module
 
 Handles creation and reading of MIDI files for drum transcription.
+Includes JSON sidecar export for spectral analysis data (Detection Output Contract).
 """
 
 from midiutil import MIDIFile
 import mido
+import json
 from pathlib import Path
 from typing import Dict, List, Union, Optional
 
 # Import helper function for event preparation
 from .analysis_core import prepare_midi_events_for_writing
 
+# Import contract for validation
+try:
+    from midi_types import SPECTRAL_REQUIRED_FIELDS
+except ImportError:
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from midi_types import SPECTRAL_REQUIRED_FIELDS
+
 __all__ = [
     'create_midi_file',
-    'read_midi_notes'
+    'read_midi_notes',
+    'save_analysis_sidecar',
+    'load_analysis_sidecar'
 ]
 
 
@@ -120,4 +132,97 @@ def read_midi_notes(midi_path: Union[str, Path], target_note: int) -> List[float
                 note_times.append(current_time)
     
     return sorted(note_times)
+
+
+def save_analysis_sidecar(
+    events_by_stem: Dict[str, List[Dict]],
+    midi_path: Union[str, Path],
+    tempo: float = 120.0
+) -> Path:
+    """
+    Save spectral analysis data as JSON sidecar file.
+    
+    Detection Output Contract:
+        Exports events with spectral fields per SpectralOnsetData TypedDict.
+        Enables learning tools and analysis without re-running detection.
+    
+    Args:
+        events_by_stem: Dictionary mapping stem names to lists of events with spectral data
+        midi_path: Path to corresponding MIDI file (sidecar uses same name + .analysis.json)
+        tempo: Tempo in BPM (for reference)
+    
+    Returns:
+        Path to created sidecar file
+    """
+    midi_path = Path(midi_path)
+    sidecar_path = midi_path.with_suffix('.analysis.json')
+    
+    # Build sidecar structure
+    sidecar_data = {
+        'version': '1.0',
+        'contract': 'SpectralOnsetData',
+        'midi_file': midi_path.name,
+        'tempo_bpm': tempo,
+        'stems': {}
+    }
+    
+    # Track which events have spectral data
+    events_with_spectral = 0
+    events_without_spectral = 0
+    
+    for stem_type, events in events_by_stem.items():
+        stem_events = []
+        for event in events:
+            # Extract spectral fields (contract fields)
+            spectral_event = {
+                'time': event.get('time'),
+                'note': event.get('note'),
+                'velocity': event.get('velocity'),
+            }
+            
+            # Add contract-defined spectral fields if present
+            has_spectral = False
+            for field in ['onset_strength', 'peak_amplitude', 'primary_energy', 
+                         'secondary_energy', 'tertiary_energy', 'geomean',
+                         'total_energy', 'status', 'sustain_ms']:
+                if field in event and event[field] is not None:
+                    spectral_event[field] = event[field]
+                    has_spectral = True
+            
+            if has_spectral:
+                events_with_spectral += 1
+            else:
+                events_without_spectral += 1
+            
+            stem_events.append(spectral_event)
+        
+        sidecar_data['stems'][stem_type] = stem_events
+    
+    # Write JSON
+    with open(sidecar_path, 'w') as f:
+        json.dump(sidecar_data, f, indent=2)
+    
+    print(f"  Saved analysis sidecar: {sidecar_path.name} ({events_with_spectral} events with spectral data)")
+    
+    return sidecar_path
+
+
+def load_analysis_sidecar(midi_path: Union[str, Path]) -> Optional[Dict]:
+    """
+    Load spectral analysis data from JSON sidecar file.
+    
+    Args:
+        midi_path: Path to MIDI file (will look for .analysis.json sidecar)
+    
+    Returns:
+        Sidecar data dict, or None if not found
+    """
+    midi_path = Path(midi_path)
+    sidecar_path = midi_path.with_suffix('.analysis.json')
+    
+    if not sidecar_path.exists():
+        return None
+    
+    with open(sidecar_path, 'r') as f:
+        return json.load(f)
 
