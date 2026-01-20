@@ -27,24 +27,23 @@ Current sidecar output:
 
 ## Phases
 
-### Phase 1: Restructure Contract (features dict)
-- [ ] Update `SpectralOnsetData` TypedDict in midi_types.py
-- [ ] Add `features: Dict[str, Any]` for extensible tool output
-- [ ] Add `decision: Dict` for rule metadata
-- [ ] Keep core fields at top level: time, note, velocity, status
-- [ ] Update SPECTRAL_REQUIRED_FIELDS
+### Phase 1: Restructure Sidecar Format
+- [ ] Change stems from `List[event]` to `{logic: {}, events: []}`
+- [ ] Add `logic` block with thresholds and pass list per stem
+- [ ] Keep event fields flat (no nested features dict - brevity)
+- [ ] Update `save_analysis_sidecar()` in midi.py
 
-### Phase 2: Include All Onsets
-- [ ] Modify `filter_onsets_by_spectral()` to track filtered onsets
-- [ ] Add `filtered_reason` field for onsets that didn't pass
-- [ ] Return both kept and filtered in separate lists
-- [ ] Update `processing_shell.py` to pass all onsets through
+### Phase 2: Include All Onsets  
+- [ ] Modify `filter_onsets_by_spectral()` to return ALL onset data
+- [ ] Add status field: KEPT, FILTERED, LEARNING
+- [ ] Track which pass filtered each onset (for status)
+- [ ] Update `processing_shell.py` to collect all onsets
 
-### Phase 3: Add Decision Metadata
-- [ ] Track which pass filtered each onset (geomean, decay, statistical)
-- [ ] Record threshold value applied
-- [ ] Calculate margin (actual - threshold)
-- [ ] Per-stem logic tracking (different stems have different rules)
+### Phase 3: Add Logic Block
+- [ ] Extract logic/thresholds from spectral_config per stem
+- [ ] Include: geomean_threshold, min_sustain_ms, decay settings, etc.
+- [ ] List active passes: ["geomean", "sustain", "decay", "statistical"]
+- [ ] Consumer calculates margin from data + logic
 
 ### Phase 4: Numeric Precision
 - [ ] Add rounding helper function
@@ -62,53 +61,49 @@ Current sidecar output:
 
 ## Output Format (Target)
 
+Logic defined ONCE per stem. Events contain only data. Consumer calculates margin.
+
 ```json
 {
   "version": "2.0",
-  "contract": "SpectralOnsetData",
-  "precision": {"time": 4, "features": 2},
+  "tempo_bpm": 120,
   "stems": {
-    "snare": [
-      {
-        "time": 1.5000,
-        "note": 38,
-        "velocity": 100,
-        "status": "KEPT",
-        "features": {
-          "geomean": 316.23,
-          "primary_energy": 500.00,
-          "secondary_energy": 200.00,
-          "sustain_ms": 150.00,
-          "onset_strength": 0.90
-        },
-        "decision": {
-          "pass": "geomean",
-          "rule": "geomean >= threshold",
-          "threshold": 100.00,
-          "value": 316.23,
-          "margin": 216.23
-        }
+    "snare": {
+      "logic": {
+        "geomean_threshold": 100.0,
+        "min_sustain_ms": 50.0,
+        "passes": ["geomean"]
       },
-      {
-        "time": 2.3400,
-        "status": "FILTERED",
-        "features": {
-          "geomean": 45.00,
-          "primary_energy": 80.00,
-          "secondary_energy": 25.00
-        },
-        "decision": {
-          "pass": "geomean",
-          "rule": "geomean >= threshold",
-          "threshold": 100.00,
-          "value": 45.00,
-          "margin": -55.00
-        }
-      }
-    ]
+      "events": [
+        {"time": 1.50, "note": 38, "velocity": 100, "status": "KEPT",
+         "geomean": 316.23, "primary_energy": 500.00, "secondary_energy": 200.00},
+        {"time": 2.34, "status": "FILTERED",
+         "geomean": 45.00, "primary_energy": 80.00, "secondary_energy": 25.00}
+      ]
+    },
+    "cymbals": {
+      "logic": {
+        "geomean_threshold": 80.0,
+        "min_sustain_ms": 100.0,
+        "decay_filter_enabled": true,
+        "decay_window_sec": 0.5,
+        "passes": ["geomean", "sustain", "decay"]
+      },
+      "events": [...]
+    },
+    "kick": {
+      "logic": {
+        "geomean_threshold": 50.0,
+        "statistical_outlier_enabled": true,
+        "passes": ["geomean", "statistical"]
+      },
+      "events": [...]
+    }
   }
 }
 ```
+
+Consumer calculates margin: `margin = event.geomean - stem.logic.geomean_threshold`
 
 ---
 
@@ -122,10 +117,10 @@ Current sidecar output:
 
 ## Estimated Effort
 
-- Phase 1: 30 min (contract changes)
-- Phase 2: 45 min (filter tracking)
-- Phase 3: 30 min (decision metadata)
-- Phase 4: 15 min (rounding)
-- Phase 5: 30 min (consumer updates)
+- Phase 1: 20 min (sidecar format)
+- Phase 2: 30 min (all onsets tracking)
+- Phase 3: 15 min (logic block extraction)
+- Phase 4: 10 min (rounding)
+- Phase 5: 20 min (consumer updates)
 
-Total: ~2.5 hours
+Total: ~1.5 hours (simplified from 2.5h - no per-event decision objects)
