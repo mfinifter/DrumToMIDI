@@ -123,6 +123,8 @@ events = [
 
 4. **Debug Output:** The terminal output columns map directly to these field names (BodyE → body_energy, etc.)
 
+5. **Anchor Note (27):** All MIDI files contain a technical anchor note at time 0 with MIDI note 27 and velocity 1. This ensures proper DAW alignment when importing. It is NOT actual drum content - ignore note 27 when analyzing MIDI files.
+
 ## CLI Commands for Per-Stem Testing
 
 ```bash

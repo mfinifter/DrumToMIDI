@@ -11,20 +11,15 @@ Bugs are now tracked in GitHub Issues: https://github.com/EverlastEngineering/Dr
 
 ## Open Bugs (Not Yet in GitHub)
 
-### Cleaned vs Raw stems have different audio content
-- **Status**: Open (needs investigation)
-- **Priority**: Low
-- **Description**: Project 10 uses "cleaned" folder where cymbals stem is silent, but project 1 uses raw "stems" folder where cymbals has content
-- **Root Cause Analysis**:
-  - CLI prefers `cleaned/` over `stems/` folders
-  - Sidechain cleanup may redistribute audio between stems
-  - Cymbals content may end up in hihat stem after cleaning
-  - No cross-stem logic in detection - stems process independently
-- **Not a Bug**: This is expected behavior - cleaned stems have different content
-- **Action Items**:
-  - [ ] Document which stem folder to use for troubleshooting
-  - [ ] Consider CLI flag to force use of raw stems: `--use-raw-stems`
-  - [ ] Verify WebUI and CLI use same stem source for given project
+### Cymbals stem is empty for Thunderstruck
+- **Status**: Closed (Not a Bug)
+- **Priority**: N/A
+- **Description**: Cymbals stem shows as silent (max amplitude 0.000443) for AC_DC_Thunderstruck_Drums track
+- **Root Cause**: The source audio separation (MDX23C) didn't extract cymbal content for this track
+  - Both `cleaned/` and `stems/` folders have empty cymbals
+  - This is separation model behavior, not a detection bug
+- **Note 27 Mystery**: MIDI files contain note 27 which is NOT cymbals - it's a technical anchor note added at time 0 for DAW alignment (see `stems_to_midi/midi.py:64`)
+- **Resolution**: Track genuinely has no separable cymbal content
 
 ---
 
