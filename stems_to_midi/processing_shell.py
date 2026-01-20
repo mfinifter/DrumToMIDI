@@ -231,7 +231,8 @@ def _create_midi_events(
     tom_classifications: Optional[np.ndarray],
     drum_mapping: DrumMapping,
     config: Dict,
-    sustain_durations: Optional[List[float]] = None
+    sustain_durations: Optional[List[float]] = None,
+    spectral_data: Optional[List[Dict]] = None
 ) -> List[Dict]:
     """
     Create MIDI events from onset data.
@@ -250,9 +251,10 @@ def _create_midi_events(
         drum_mapping: MIDI note mapping
         config: Configuration dictionary
         sustain_durations: Optional list of sustain durations in milliseconds (for cymbals and hihat foot-close events)
+        spectral_data: Optional list of spectral analysis dicts (Detection Output Contract)
     
     Returns:
-        List of MIDI event dictionaries
+        List of MIDI event dictionaries with optional spectral fields
     """
     # Get timing offset for this stem type (applied to MIDI timing only, not audio analysis)
     stem_config = config.get(stem_type, {})
@@ -304,12 +306,33 @@ def _create_midi_events(
         # Apply timing offset to MIDI event (compensates for onset detection timing)
         midi_time = float(time) + timing_offset
         
-        events.append({
+        # Create base event with MIDI essentials
+        event = {
             'time': midi_time,
             'note': int(midi_note),
             'velocity': int(velocity),
             'duration': float(duration)
-        })
+        }
+        
+        # Add spectral data if available (Detection Output Contract)
+        # MIDI export ignores these extra fields; analysis/learning tools use them
+        if spectral_data is not None and i < len(spectral_data):
+            onset_info = spectral_data[i]
+            # Common fields
+            event['onset_strength'] = onset_info.get('strength')
+            event['peak_amplitude'] = onset_info.get('amplitude')
+            event['geomean'] = onset_info.get('body_wire_geomean')
+            event['total_energy'] = onset_info.get('total_energy')
+            event['status'] = onset_info.get('status')
+            # Stem-specific energy bands (use generic names from contract)
+            event['primary_energy'] = onset_info.get('primary_energy')
+            event['secondary_energy'] = onset_info.get('secondary_energy')
+            if 'tertiary_energy' in onset_info:
+                event['tertiary_energy'] = onset_info.get('tertiary_energy')
+            if 'sustain_ms' in onset_info:
+                event['sustain_ms'] = onset_info.get('sustain_ms')
+        
+        events.append(event)
         
         # Generate foot-close event for open hihats
         if (stem_type == 'hihat' and hihat_states[i] == 'open' and 
@@ -463,6 +486,7 @@ def process_stem_to_midi(
         cymbal_sustain_durations = filter_result['filtered_sustains'] if stem_type == 'cymbals' else None
         all_onset_data = filter_result['all_onset_data']
         spectral_config = filter_result['spectral_config']
+        filtered_onset_data = filter_result.get('filtered_onset_data', [])
 
         # Show ALL onset data and spectral chart if debug flags are enabled
         if show_all_onsets or show_spectral_data:
@@ -686,7 +710,8 @@ def process_stem_to_midi(
         tom_classifications,
         drum_mapping,
         config,
-        sustain_durations=sustain_durations_param
+        sustain_durations=sustain_durations_param,
+        spectral_data=filtered_onset_data
     )
     
     print(f"    Created {len(events)} MIDI events from {len(onset_times)} onsets")

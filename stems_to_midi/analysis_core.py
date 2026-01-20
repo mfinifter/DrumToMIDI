@@ -702,6 +702,7 @@ def filter_onsets_by_spectral(
             'filtered_geomeans': np.array([]),
             'filtered_sustains': [],
             'filtered_spectral': [],
+            'filtered_onset_data': [],  # Full spectral data for KEPT onsets
             'all_onset_data': [],
             'spectral_config': None
         }
@@ -719,6 +720,7 @@ def filter_onsets_by_spectral(
     filtered_geomeans = []
     filtered_sustains = []  # For hihat open/closed detection
     filtered_spectral = []  # For hihat handclap detection
+    filtered_onset_data = []  # Full spectral data for KEPT onsets (for Detection Output Contract)
     
     # Store raw spectral data for ALL onsets (for debug output)
     all_onset_data = []
@@ -791,6 +793,10 @@ def filter_onsets_by_spectral(
                         'primary_energy': primary_energy,
                         'secondary_energy': secondary_energy
                     })
+            # Store full spectral data for this KEPT onset (Detection Output Contract)
+            kept_onset_data = onset_data.copy()
+            kept_onset_data['status'] = 'KEPT' if is_real_hit else 'LEARNING'
+            filtered_onset_data.append(kept_onset_data)
     
     # SECOND PASS: Remove cymbal retriggering using decay pattern analysis
     # Cymbals can have energy modulation during sustain that looks like new onsets
@@ -812,6 +818,7 @@ def filter_onsets_by_spectral(
             final_amplitudes = []
             final_geomeans = []
             final_sustains = []
+            final_onset_data = []  # Track spectral data through decay filter
             
             # Track all decay analysis for debug output
             decay_analysis_data = []
@@ -864,6 +871,8 @@ def filter_onsets_by_spectral(
                     final_geomeans.append(filtered_geomeans[i])
                     if i < len(filtered_sustains):
                         final_sustains.append(filtered_sustains[i])
+                    if i < len(filtered_onset_data):
+                        final_onset_data.append(filtered_onset_data[i])
                     
                     # Analyze decay pattern starting from this onset
                     decay_pattern = analyze_cymbal_decay_pattern(
@@ -893,6 +902,7 @@ def filter_onsets_by_spectral(
             filtered_amplitudes = final_amplitudes
             filtered_geomeans = final_geomeans
             filtered_sustains = final_sustains
+            filtered_onset_data = final_onset_data
     
     # THIRD PASS: Statistical outlier detection (kick only, if enabled)
     # This catches snare bleed that passes geomean threshold but has abnormal FundE/BodyE ratio
@@ -929,22 +939,26 @@ def filter_onsets_by_spectral(
             final_strengths = []
             final_amplitudes = []
             final_geomeans = []
+            final_onset_data = []
             
-            for time, strength, amplitude, geomean in zip(
+            for i, (time, strength, amplitude, geomean) in enumerate(zip(
                 filtered_times, filtered_strengths, filtered_amplitudes, filtered_geomeans
-            ):
+            )):
                 onset_data = onset_data_by_time.get(time)
                 if onset_data and onset_data.get('badness_score', 0) <= badness_threshold:
                     final_times.append(time)
                     final_strengths.append(strength)
                     final_amplitudes.append(amplitude)
                     final_geomeans.append(geomean)
+                    if i < len(filtered_onset_data):
+                        final_onset_data.append(filtered_onset_data[i])
             
             # Update filtered arrays with statistical filter results
             filtered_times = final_times
             filtered_strengths = final_strengths
             filtered_amplitudes = final_amplitudes
             filtered_geomeans = final_geomeans
+            filtered_onset_data = final_onset_data
             
             # Store statistical info in config for debug output
             spectral_config['statistical_params'] = statistical_params
@@ -966,6 +980,7 @@ def filter_onsets_by_spectral(
         'filtered_geomeans': np.array(filtered_geomeans),
         'filtered_sustains': filtered_sustains,
         'filtered_spectral': filtered_spectral,
+        'filtered_onset_data': filtered_onset_data,  # Full spectral data for KEPT onsets
         'all_onset_data': all_onset_data,
         'spectral_config': spectral_config,
         'decay_analysis': decay_analysis
