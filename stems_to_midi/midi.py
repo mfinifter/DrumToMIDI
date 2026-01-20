@@ -134,22 +134,34 @@ def read_midi_notes(midi_path: Union[str, Path], target_note: int) -> List[float
     return sorted(note_times)
 
 
+def _round_value(value, decimals: int):
+    """Round numeric value to specified decimals, handle None."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return round(value, decimals)
+    return value
+
+
 def save_analysis_sidecar(
     events_by_stem: Dict[str, List[Dict]],
     midi_path: Union[str, Path],
-    tempo: float = 120.0
+    tempo: float = 120.0,
+    analysis_by_stem: Optional[Dict[str, Dict]] = None
 ) -> Path:
     """
-    Save spectral analysis data as JSON sidecar file.
+    Save spectral analysis data as JSON sidecar file (v2 format).
     
-    Detection Output Contract:
-        Exports events with spectral fields per SpectralOnsetData TypedDict.
-        Enables learning tools and analysis without re-running detection.
+    V2 Format:
+        - Logic block per stem (thresholds, passes)
+        - All onsets included (KEPT + FILTERED)
+        - Numeric precision: times=4 decimals, features=2 decimals
     
     Args:
-        events_by_stem: Dictionary mapping stem names to lists of events with spectral data
+        events_by_stem: Dictionary mapping stem names to lists of MIDI events
         midi_path: Path to corresponding MIDI file (sidecar uses same name + .analysis.json)
         tempo: Tempo in BPM (for reference)
+        analysis_by_stem: Dict with all_onset_data and spectral_config per stem
     
     Returns:
         Path to created sidecar file
@@ -157,52 +169,108 @@ def save_analysis_sidecar(
     midi_path = Path(midi_path)
     sidecar_path = midi_path.with_suffix('.analysis.json')
     
-    # Build sidecar structure
+    # Build sidecar structure v2
     sidecar_data = {
-        'version': '1.0',
-        'contract': 'SpectralOnsetData',
-        'midi_file': midi_path.name,
-        'tempo_bpm': tempo,
+        'version': '2.0',
+        'tempo_bpm': round(tempo, 1),
         'stems': {}
     }
     
-    # Track which events have spectral data
-    events_with_spectral = 0
-    events_without_spectral = 0
+    total_events = 0
+    total_filtered = 0
     
     for stem_type, events in events_by_stem.items():
-        stem_events = []
-        for event in events:
-            # Extract spectral fields (contract fields)
-            spectral_event = {
-                'time': event.get('time'),
-                'note': event.get('note'),
-                'velocity': event.get('velocity'),
-            }
-            
-            # Add contract-defined spectral fields if present
-            has_spectral = False
-            for field in ['onset_strength', 'peak_amplitude', 'primary_energy', 
-                         'secondary_energy', 'tertiary_energy', 'geomean',
-                         'total_energy', 'status', 'sustain_ms']:
-                if field in event and event[field] is not None:
-                    spectral_event[field] = event[field]
-                    has_spectral = True
-            
-            if has_spectral:
-                events_with_spectral += 1
-            else:
-                events_without_spectral += 1
-            
-            stem_events.append(spectral_event)
+        # Get analysis data for this stem
+        analysis = analysis_by_stem.get(stem_type, {}) if analysis_by_stem else {}
+        all_onset_data = analysis.get('all_onset_data', [])
+        spectral_config = analysis.get('spectral_config')
         
-        sidecar_data['stems'][stem_type] = stem_events
+        # Build logic block from spectral_config
+        logic = {}
+        if spectral_config:
+            logic['geomean_threshold'] = _round_value(spectral_config.get('geomean_threshold'), 2)
+            logic['min_sustain_ms'] = _round_value(spectral_config.get('min_sustain_ms'), 2)
+            
+            # Cymbal-specific logic
+            if stem_type == 'cymbals':
+                logic['decay_filter_enabled'] = spectral_config.get('decay_filter_enabled', True)
+                logic['decay_window_sec'] = _round_value(spectral_config.get('decay_window_sec'), 2)
+            
+            # Kick-specific logic
+            if stem_type == 'kick':
+                logic['statistical_enabled'] = spectral_config.get('statistical_enabled', False)
+            
+            # Determine passes (simplified - could be made more sophisticated)
+            passes = ['geomean']
+            if spectral_config.get('min_sustain_ms'):
+                passes.append('sustain')
+            if stem_type == 'cymbals' and logic.get('decay_filter_enabled'):
+                passes.append('decay')
+            if stem_type == 'kick' and logic.get('statistical_enabled'):
+                passes.append('statistical')
+            logic['passes'] = passes
+        
+        # Build events list from all_onset_data (includes KEPT + FILTERED)
+        stem_events = []
+        if all_onset_data:
+            for onset_data in all_onset_data:
+                event = {
+                    'time': _round_value(onset_data.get('time'), 4),
+                    'status': onset_data.get('status', 'UNKNOWN')
+                }
+                
+                # Add spectral features with rounding
+                for field in ['strength', 'amplitude', 'primary_energy', 'secondary_energy',
+                             'tertiary_energy', 'geomean', 'total_energy', 'sustain_ms']:
+                    value = onset_data.get(field)
+                    if value is not None:
+                        event[field] = _round_value(value, 2)
+                
+                # Add MIDI fields for KEPT events (from events_by_stem)
+                if event['status'] == 'KEPT':
+                    # Find matching MIDI event by time
+                    for midi_event in events:
+                        if abs(midi_event.get('time', 0) - onset_data.get('time', -1)) < 0.001:
+                            event['note'] = midi_event.get('note')
+                            event['velocity'] = midi_event.get('velocity')
+                            break
+                
+                stem_events.append(event)
+                total_events += 1
+                if event['status'] == 'FILTERED':
+                    total_filtered += 1
+        else:
+            # Fallback: use events_by_stem if no all_onset_data
+            for midi_event in events:
+                event = {
+                    'time': _round_value(midi_event.get('time'), 4),
+                    'note': midi_event.get('note'),
+                    'velocity': midi_event.get('velocity'),
+                    'status': 'KEPT'
+                }
+                
+                # Add spectral fields if present
+                for field in ['onset_strength', 'peak_amplitude', 'primary_energy',
+                             'secondary_energy', 'tertiary_energy', 'geomean',
+                             'total_energy', 'sustain_ms']:
+                    value = midi_event.get(field)
+                    if value is not None:
+                        event[field] = _round_value(value, 2)
+                
+                stem_events.append(event)
+                total_events += 1
+        
+        # Assemble stem data
+        sidecar_data['stems'][stem_type] = {
+            'logic': logic,
+            'events': stem_events
+        }
     
     # Write JSON
     with open(sidecar_path, 'w') as f:
         json.dump(sidecar_data, f, indent=2)
     
-    print(f"  Saved analysis sidecar: {sidecar_path.name} ({events_with_spectral} events with spectral data)")
+    print(f"  Saved analysis sidecar v2: {sidecar_path.name} ({total_events} total events, {total_filtered} filtered)")
     
     return sidecar_path
 

@@ -432,7 +432,7 @@ class TestProcessDrumToMIDI:
         onset_wait = test_config['onset_detection']['wait']
         hop_length = test_config['onset_detection']['hop_length']
         
-        events = process_stem_to_midi(
+        result = process_stem_to_midi(
             temp_path,
             'kick',
             drum_mapping,
@@ -444,7 +444,10 @@ class TestProcessDrumToMIDI:
             detect_hihat_open=False
         )
         
-        # Should detect some events
+        # Should return dict with events
+        assert isinstance(result, dict)
+        assert 'events' in result
+        events = result['events']
         assert len(events) > 0
         
         # Check event structure
@@ -473,7 +476,7 @@ class TestProcessDrumToMIDI:
             onset_wait = sample_config['onset_detection']['wait']
             hop_length = sample_config['onset_detection']['hop_length']
             
-            events = process_stem_to_midi(
+            result = process_stem_to_midi(
                 temp_path,
                 'kick',
                 drum_mapping,
@@ -485,6 +488,7 @@ class TestProcessDrumToMIDI:
             )
             
             # Silent audio should produce no events
+            events = result.get('events', [])
             assert len(events) == 0
         finally:
             temp_path.unlink()

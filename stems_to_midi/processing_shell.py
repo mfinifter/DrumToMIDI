@@ -392,12 +392,15 @@ def process_stem_to_midi(
         max_duration: Maximum duration in seconds to analyze (None = all)
     
     Returns:
-        List of MIDI events: [{'time': float, 'note': int, 'velocity': int, 'duration': float}, ...]
+        Dict with:
+            'events': List of MIDI events
+            'all_onset_data': List of all detected onsets (kept + filtered)
+            'spectral_config': Spectral config used for this stem
     """
     # Step 1: Load and validate audio
     audio, sr = _load_and_validate_audio(audio_path, config, stem_type, max_duration)
     if audio is None:
-        return []
+        return {'events': [], 'all_onset_data': [], 'spectral_config': None}
     
     # Step 2: Configure and detect onsets
     onset_params = _configure_onset_detection(config, stem_type)
@@ -440,7 +443,7 @@ def process_stem_to_midi(
     print(f"    Found {len(onset_times)} hits (before filtering) -> MIDI note {getattr(drum_mapping, stem_type)}")
     
     if len(onset_times) == 0:
-        return []
+        return {'events': [], 'all_onset_data': [], 'spectral_config': None}
     
     # Step 3: Calculate peak amplitudes for all onsets
     peak_amplitudes = np.array([
@@ -656,7 +659,7 @@ def process_stem_to_midi(
             print(f"        Pass 2 Rejected (retriggering): {rejected_count}")
     
     if len(onset_times) == 0:
-        return []
+        return {'events': [], 'all_onset_data': all_onset_data, 'spectral_config': spectral_config}
     
     # Step 5: Get MIDI note number
     note = getattr(drum_mapping, stem_type)
@@ -716,4 +719,9 @@ def process_stem_to_midi(
     
     print(f"    Created {len(events)} MIDI events from {len(onset_times)} onsets")
     
-    return events
+    # Return dict with events and analysis data for sidecar v2
+    return {
+        'events': events,
+        'all_onset_data': all_onset_data if 'all_onset_data' in locals() else [],
+        'spectral_config': spectral_config if 'spectral_config' in locals() else None
+    }

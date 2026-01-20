@@ -765,7 +765,19 @@ def filter_onsets_by_spectral(
         sustain_duration = analysis['sustain_ms']
         spectral_ratio = analysis['spectral_ratio']
         
-        # Store all data for this onset (for debug output)
+        # Determine if this onset should be kept
+        is_real_hit = should_keep_onset(
+            geomean=body_wire_geomean,
+            sustain_ms=sustain_duration,
+            geomean_threshold=geomean_threshold,
+            min_sustain_ms=min_sustain_ms,
+            stem_type=stem_type,
+            strength=strength,
+            min_strength_threshold=spectral_config.get('min_strength_threshold')
+        )
+        
+        # Store all data for this onset (for debug output AND sidecar v2)
+        # Include status field for sidecar v2 format
         onset_data = {
             'time': onset_time,
             'strength': strength,
@@ -777,7 +789,8 @@ def filter_onsets_by_spectral(
             'total_energy': total_energy,
             'body_wire_geomean': body_wire_geomean,
             'energy_label_1': energy_labels['primary'],
-            'energy_label_2': energy_labels['secondary']
+            'energy_label_2': energy_labels['secondary'],
+            'status': 'KEPT' if (learning_mode or is_real_hit) else 'FILTERED'
         }
         
         # Add tertiary energy if present (kick attack range)
@@ -789,17 +802,6 @@ def filter_onsets_by_spectral(
             onset_data['sustain_ms'] = sustain_duration
         
         all_onset_data.append(onset_data)
-        
-        # Determine if this onset should be kept
-        is_real_hit = should_keep_onset(
-            geomean=body_wire_geomean,
-            sustain_ms=sustain_duration,
-            geomean_threshold=geomean_threshold,
-            min_sustain_ms=min_sustain_ms,
-            stem_type=stem_type,
-            strength=strength,
-            min_strength_threshold=spectral_config.get('min_strength_threshold')
-        )
         
         # In learning mode, keep ALL detections
         if learning_mode or is_real_hit:
@@ -816,9 +818,7 @@ def filter_onsets_by_spectral(
                         'secondary_energy': secondary_energy
                     })
             # Store full spectral data for this KEPT onset (Detection Output Contract)
-            kept_onset_data = onset_data.copy()
-            kept_onset_data['status'] = 'KEPT' if is_real_hit else 'LEARNING'
-            filtered_onset_data.append(kept_onset_data)
+            filtered_onset_data.append(onset_data.copy())
     
     # SECOND PASS: Remove cymbal retriggering using decay pattern analysis
     # Cymbals can have energy modulation during sustain that looks like new onsets
@@ -925,6 +925,12 @@ def filter_onsets_by_spectral(
             filtered_geomeans = final_geomeans
             filtered_sustains = final_sustains
             filtered_onset_data = final_onset_data
+            
+            # Update status in all_onset_data for retriggered events
+            final_times_set = set(final_times)
+            for onset_data in all_onset_data:
+                if onset_data['status'] == 'KEPT' and onset_data['time'] not in final_times_set:
+                    onset_data['status'] = 'FILTERED'  # Filtered by decay pass
     
     # THIRD PASS: Statistical outlier detection (kick only, if enabled)
     # This catches snare bleed that passes geomean threshold but has abnormal FundE/BodyE ratio
@@ -981,6 +987,12 @@ def filter_onsets_by_spectral(
             filtered_amplitudes = final_amplitudes
             filtered_geomeans = final_geomeans
             filtered_onset_data = final_onset_data
+            
+            # Update status in all_onset_data for statistically rejected events
+            final_times_set = set(final_times)
+            for onset_data in all_onset_data:
+                if onset_data['status'] == 'KEPT' and onset_data['time'] not in final_times_set:
+                    onset_data['status'] = 'FILTERED'  # Filtered by statistical pass
             
             # Store statistical info in config for debug output
             spectral_config['statistical_params'] = statistical_params

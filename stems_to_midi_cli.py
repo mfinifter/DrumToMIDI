@@ -247,7 +247,7 @@ def _process_stems_to_midi(
                 # If not set via command-line, check config
                 hihat_detect = config.get('hihat', {}).get('detect_open', False)
             
-            events = process_stem_to_midi(
+            result = process_stem_to_midi(
                 stem_file,
                 stem_type,
                 drum_mapping,
@@ -262,8 +262,15 @@ def _process_stems_to_midi(
                 max_duration=max_duration
             )
             
-            if events:
-                events_by_stem[stem_type] = events
+            if result and result.get('events'):
+                events_by_stem[stem_type] = result['events']
+                # Store analysis data for sidecar v2
+                if 'analysis_by_stem' not in locals():
+                    analysis_by_stem = {}
+                analysis_by_stem[stem_type] = {
+                    'all_onset_data': result.get('all_onset_data', []),
+                    'spectral_config': result.get('spectral_config')
+                }
             
             # Progress: after each stem (0-90% of total)
             processed_stems += 1
@@ -287,8 +294,11 @@ def _process_stems_to_midi(
                 config=config
             )
             
-            # Save analysis sidecar with spectral data (Detection Output Contract)
-            save_analysis_sidecar(events_by_stem, midi_path, tempo=tempo)
+            # Save analysis sidecar with spectral data (Detection Output Contract v2)
+            if 'analysis_by_stem' in locals():
+                save_analysis_sidecar(events_by_stem, midi_path, tempo=tempo, analysis_by_stem=analysis_by_stem)
+            else:
+                save_analysis_sidecar(events_by_stem, midi_path, tempo=tempo)
             
             # Progress: after MIDI creation (90-100% of total)
             midi_progress = int(90 + (song_idx / total_songs) * 10)
