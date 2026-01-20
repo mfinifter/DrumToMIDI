@@ -213,6 +213,11 @@ def save_analysis_sidecar(
         # Build events list from all_onset_data (includes KEPT + FILTERED)
         stem_events = []
         if all_onset_data:
+            # Match MIDI events to KEPT onsets by index (they're in the same order)
+            # Filter to only regular MIDI events (exclude foot-close events)
+            midi_events = [e for e in events if e.get('note') != 44]  # 44 is foot-close note
+            midi_idx = 0
+            
             for onset_data in all_onset_data:
                 event = {
                     'time': _round_value(onset_data.get('time'), 4),
@@ -226,14 +231,12 @@ def save_analysis_sidecar(
                     if value is not None:
                         event[field] = _round_value(value, 2)
                 
-                # Add MIDI fields for KEPT events (from events_by_stem)
+                # Add MIDI fields for KEPT events (from events_by_stem by index)
                 if event['status'] == 'KEPT':
-                    # Find matching MIDI event by time
-                    for midi_event in events:
-                        if abs(midi_event.get('time', 0) - onset_data.get('time', -1)) < 0.001:
-                            event['note'] = midi_event.get('note')
-                            event['velocity'] = midi_event.get('velocity')
-                            break
+                    if midi_idx < len(midi_events):
+                        event['note'] = midi_events[midi_idx].get('note')
+                        event['velocity'] = midi_events[midi_idx].get('velocity')
+                        midi_idx += 1
                 
                 stem_events.append(event)
                 total_events += 1
