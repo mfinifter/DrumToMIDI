@@ -9,12 +9,27 @@ Architecture: Imperative Shell (Algorithm Coordinators)
 - Uses functional core helpers for pure logic
 - Delegates pure transformations to stems_to_midi_helpers
 
+Detection Output Contract:
+- This module CONSUMES SpectralOnsetData from analysis_core.py
+- Contract defined in midi_types.py (SpectralOnsetData TypedDict)
+- Uses: primary_energy, secondary_energy for hihat open/closed classification
+
 Note: This module contains coordinators, not pure functions. Pure functions are in helpers.
 """
 
 from typing import Tuple, List, Dict
 import numpy as np
 import librosa
+
+# Import contract types from parent module
+try:
+    from midi_types import SpectralOnsetData, SPECTRAL_REQUIRED_FIELDS
+except ImportError:
+    # Running from stems_to_midi/ directly
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from midi_types import SpectralOnsetData, SPECTRAL_REQUIRED_FIELDS
 
 # Import functional core helpers
 from .analysis_core import (
@@ -238,7 +253,7 @@ def detect_hihat_state(
     onset_times: np.ndarray,
     sustain_durations: List[float] = None,
     open_sustain_threshold_ms: float = 150.0,
-    spectral_data: List[Dict] = None,
+    spectral_data: List[SpectralOnsetData] = None,
     config: Dict = None
 ) -> List[str]:
     """
@@ -247,13 +262,18 @@ def detect_hihat_state(
     - Open hi-hats: Sustain >150ms + high body energy + low peak amplitude
     - Closed hi-hats: Everything else
     
+    Detection Output Contract (Consumer):
+        This function CONSUMES SpectralOnsetData from analysis_core.py.
+        Required fields: primary_energy (Body), secondary_energy (Sizzle)
+        See midi_types.SpectralOnsetData for full contract.
+    
     Args:
         audio: Audio signal
         sr: Sample rate
         onset_times: Times of detected onsets
         sustain_durations: Pre-calculated sustain durations in ms (if available)
         open_sustain_threshold_ms: Threshold in ms (longer = open, shorter = closed)
-        spectral_data: List of dicts with 'primary_energy' and 'secondary_energy'
+        spectral_data: List of SpectralOnsetData dicts (Detection Output Contract)
         config: Configuration dict
     
     Returns:

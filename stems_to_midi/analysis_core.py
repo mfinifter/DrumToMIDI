@@ -3,11 +3,26 @@ Pure helper functions for stem to MIDI conversion.
 
 These are functional core functions - pure, deterministic, no I/O or side effects.
 All audio processing logic extracted here for testability.
+
+Detection Output Contract (Producer):
+    filter_onsets_by_spectral() produces SpectralOnsetData dicts.
+    Contract defined in midi_types.py - see SpectralOnsetData TypedDict.
+    Consumers: detection_shell.detect_hihat_state(), learning.py
 """
 
 import numpy as np
 from typing import Tuple, Dict, Optional, List
 from scipy.signal import medfilt
+
+# Import contract types for documentation/validation
+try:
+    from midi_types import SpectralOnsetData, SPECTRAL_REQUIRED_FIELDS
+except ImportError:
+    # Running from stems_to_midi/ directly
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from midi_types import SpectralOnsetData, SPECTRAL_REQUIRED_FIELDS
 
 
 # ============================================================================
@@ -673,6 +688,12 @@ def filter_onsets_by_spectral(
     
     Pure function - no side effects, no I/O.
     
+    Detection Output Contract (Producer):
+        This function PRODUCES SpectralOnsetData for each kept onset.
+        Contract defined in midi_types.py - see SpectralOnsetData TypedDict.
+        filtered_onset_data contains full analysis for all KEPT onsets.
+        Consumers: detect_hihat_state(), learning.py, processing_shell.py
+    
     Args:
         onset_times: Array of onset times in seconds
         onset_strengths: Array of onset strengths (0-1)
@@ -691,6 +712,7 @@ def filter_onsets_by_spectral(
         - filtered_geomeans: np.ndarray
         - filtered_sustains: List (for hihat and cymbals)
         - filtered_spectral: List (for hihat only)
+        - filtered_onset_data: List[SpectralOnsetData] - contract-compliant spectral data
         - all_onset_data: List[Dict] (analysis for all onsets, for debugging)
         - spectral_config: Dict (configuration used)
     """
