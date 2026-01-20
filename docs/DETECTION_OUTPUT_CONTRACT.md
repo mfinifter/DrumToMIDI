@@ -140,6 +140,77 @@ python stems_to_midi_cli.py <project> --stems cymbals --maxtime 60
 #     show_spectral_data: true
 ```
 
+## Learning Mode (High-Sensitivity Troubleshooting)
+
+Learning mode runs detection with ultra-sensitive settings to catch ALL possible onsets, including false positives. This is essential for:
+
+1. **Threshold calibration** - See what the detector CAN detect, then tune thresholds
+2. **Debugging missed hits** - Determine if an onset was detected but filtered out
+3. **Training data generation** - Export all candidates for ML labeling
+
+### CLI Usage
+
+```bash
+# Enable learning mode via CLI flag
+python stems_to_midi_cli.py <project> --learn
+
+# Learning mode + individual stem
+python stems_to_midi_cli.py <project> --learn --stems hihat --maxtime 30
+```
+
+### Config Settings
+
+From `midiconfig.yaml`:
+
+```yaml
+learning_mode:
+  enabled: false                      # Enable learning mode
+  export_all_detections: true         # Export ALL onsets (even rejected)
+  rejected_velocity: 1                # Velocity for rejected hits (visible in DAW)
+  kept_velocity_normal: true          # Use normal velocity for kept hits
+  
+  # Ultra-sensitive detection parameters
+  learning_onset_threshold: 0.0001    # Very low - catches everything
+  learning_delta: 0.002               # Very sensitive peak picking
+  learning_wait: 1                    # Allow very close hits (~11ms)
+  
+  # Output locations
+  learning_midi_suffix: "_learning"   # MIDI file suffix
+  calibrated_config_output: "midiconfig_calibrated.yaml"
+```
+
+### Learning Mode Output
+
+In learning mode, ALL detected onsets are exported to MIDI:
+- **Kept hits**: Normal velocity (40-127 based on amplitude)
+- **Rejected hits**: Velocity = 1 (visible in DAW but quiet)
+
+This allows visual inspection in a DAW to see what the detector found and why certain hits were rejected.
+
+### Workflow for Threshold Calibration
+
+1. Run in learning mode: `python stems_to_midi_cli.py <project> --learn`
+2. Open the `_learning.mid` file in DAW
+3. Delete false positives, add missed hits
+4. Save edited MIDI
+5. Run threshold learning: `learn_threshold_from_midi()` compares original vs edited
+6. New optimal thresholds saved to `midiconfig_calibrated.yaml`
+
+## Known Limitations
+
+### Individual vs Full Pipeline
+
+Running stems individually (`--stems cymbals`) may produce different results than running all stems together through the WebUI. Potential causes:
+
+1. **Stem source folders** - CLI prefers `cleaned/` over `stems/` 
+2. **Cleaned stems** - Post-sidechain audio may have content redistributed
+3. **Pipeline state** - Some inter-stem logic may not run in individual mode
+
+When debugging, verify which stem source is being used:
+```
+Using stems from: /path/to/project/cleaned  # or /path/to/project/stems
+```
+
 ## Migration Path
 
 1. Add fields to output dicts in `filter_onsets_by_spectral()` 

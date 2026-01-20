@@ -1,26 +1,35 @@
-## Bug: Broken import after file rename - render_midi_video_shell.py
-- **Status**: Fixed
-- **Priority**: High
-- **Description**: After renaming `midi_video_moderngl.py` to `midi_video_shell.py`, two import statements were not updated, causing runtime failure when using ModernGL renderer
-- **Steps to Reproduce**: 
-  1. Create project and generate MIDI
-  2. Use web UI to render video with ModernGL renderer
-  3. Import fails: `ModuleNotFoundError: No module named 'moderngl_renderer.midi_video_moderngl'`
-- **Expected Behavior**: ModernGL renderer should work via web UI
-- **Actual Behavior**: Import fails at runtime
-- **Root Cause**: Missing test coverage for `render_project_video()` with `use_moderngl=True` - the conditional import inside `if use_moderngl:` block was never executed in tests
-- **Fixed in Commit**: (current session - 2026-01-18)
-- **Follow-up Required**: Add integration test for `render_project_video()` with ModernGL renderer
+## Bugs Migrated to GitHub Issues
 
-## Bug: Text lane legend may overlap with next lane
-- **Status**: Open
-- **Priority**: Medium
-- **Description**: Lane labels in video overlay can overlap when multiple instruments share a lane
-- **Expected Behavior**: Each subsequent lane label should be on separate line with blank line spacing for multi-line lanes
-- **Actual Behavior**: Text overlaps when two lines appear on one lane
-- **Proposed Solution**: Put each subsequent lane down one line, with blank line between multi-line lanes
+Bugs are now tracked in GitHub Issues: https://github.com/EverlastEngineering/DrumToMIDI/issues
 
-## Bug: Missing instrument labels
-- **Status**: Open
+- [#2](https://github.com/EverlastEngineering/DrumToMIDI/issues/2) - Missing instrument labels (Low)
+- [#3](https://github.com/EverlastEngineering/DrumToMIDI/issues/3) - Text lane legend overlap (Medium)
+- [#4](https://github.com/EverlastEngineering/DrumToMIDI/issues/4) - Add ModernGL renderer test (follow-up)
+- [#5](https://github.com/EverlastEngineering/DrumToMIDI/issues/5) - Stale references to stems_to_midi.py
+
+---
+
+## Open Bugs (Not Yet in GitHub)
+
+### Cleaned vs Raw stems have different audio content
+- **Status**: Open (needs investigation)
 - **Priority**: Low
-- **Description**: Many instruments in the MIDI visualization don't have lane labels displayed
+- **Description**: Project 10 uses "cleaned" folder where cymbals stem is silent, but project 1 uses raw "stems" folder where cymbals has content
+- **Root Cause Analysis**:
+  - CLI prefers `cleaned/` over `stems/` folders
+  - Sidechain cleanup may redistribute audio between stems
+  - Cymbals content may end up in hihat stem after cleaning
+  - No cross-stem logic in detection - stems process independently
+- **Not a Bug**: This is expected behavior - cleaned stems have different content
+- **Action Items**:
+  - [ ] Document which stem folder to use for troubleshooting
+  - [ ] Consider CLI flag to force use of raw stems: `--use-raw-stems`
+  - [ ] Verify WebUI and CLI use same stem source for given project
+
+---
+
+## Fixed Bugs (Historical)
+
+### Broken import after file rename - render_midi_video_shell.py
+- **Fixed**: 2026-01-18
+- **Root Cause**: Missing test coverage for `render_project_video()` with `use_moderngl=True`
