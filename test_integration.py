@@ -296,7 +296,7 @@ class TestStemsToMidi:
         
         # Process kick stem
         kick_path = stems_dir / "test_song-kick.wav"
-        notes = process_stem_to_midi(
+        result = process_stem_to_midi(
             kick_path,
             stem_type='kick',
             drum_mapping=drum_mapping,
@@ -308,6 +308,7 @@ class TestStemsToMidi:
             min_velocity=40,
             max_velocity=127
         )
+        notes = result['events']
         
         # Notes should be detected (we put 2 kick hits in synthetic stems)
         assert len(notes) >= 1  # At least some notes detected
@@ -348,7 +349,7 @@ class TestStemsToMidi:
         for stem_type in ['kick', 'snare', 'hihat']:
             stem_path = stems_dir / f"test_song-{stem_type}.wav"
             if stem_path.exists():
-                notes = process_stem_to_midi(
+                result = process_stem_to_midi(
                     stem_path,
                     stem_type=stem_type,
                     drum_mapping=drum_mapping,
@@ -360,6 +361,7 @@ class TestStemsToMidi:
                     min_velocity=40,
                     max_velocity=127
                 )
+                notes = result['events']
                 if notes:
                     events_by_stem[stem_type] = notes
         
@@ -408,7 +410,7 @@ class TestVideoRendering:
         
         # Generate MIDI from kick stem
         kick_path = stems_dir / "test_song-kick.wav"
-        notes = process_stem_to_midi(
+        result = process_stem_to_midi(
             kick_path,
             stem_type='kick',
             drum_mapping=drum_mapping,
@@ -420,6 +422,7 @@ class TestVideoRendering:
             min_velocity=40,
             max_velocity=127
         )
+        notes = result['events']
         
         midi_path = midi_dir / "test_song.mid"
         create_midi_file({'kick': notes}, str(midi_path), tempo=120.0)
@@ -457,7 +460,7 @@ class TestVideoRendering:
         hop_length = onset_params.get('hop_length', 512)
         
         kick_path = stems_dir / "test_song-kick.wav"
-        notes = process_stem_to_midi(
+        result = process_stem_to_midi(
             kick_path,
             stem_type='kick',
             drum_mapping=drum_mapping,
@@ -469,6 +472,7 @@ class TestVideoRendering:
             min_velocity=40,
             max_velocity=127
         )
+        notes = result['events']
         
         midi_path = midi_dir / "test_song.mid"
         create_midi_file({'kick': notes}, str(midi_path), tempo=120.0)
@@ -524,7 +528,7 @@ class TestFullPipeline:
         for stem_type in ['kick', 'snare', 'hihat']:
             stem_path = stems_dir / f"test_song-{stem_type}.wav"
             if stem_path.exists():
-                notes = process_stem_to_midi(
+                result = process_stem_to_midi(
                     stem_path,
                     stem_type=stem_type,
                     drum_mapping=drum_mapping,
@@ -536,6 +540,7 @@ class TestFullPipeline:
                     min_velocity=40,
                     max_velocity=127
                 )
+                notes = result['events']
                 if notes:
                     events_by_stem[stem_type] = notes
         

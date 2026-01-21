@@ -23,13 +23,13 @@ import librosa
 
 # Import contract types from parent module
 try:
-    from midi_types import SpectralOnsetData, SPECTRAL_REQUIRED_FIELDS
+    from midi_types import SpectralOnsetData
 except ImportError:
     # Running from stems_to_midi/ directly
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from midi_types import SpectralOnsetData, SPECTRAL_REQUIRED_FIELDS
+    from midi_types import SpectralOnsetData
 
 # Import functional core helpers
 from .analysis_core import (
