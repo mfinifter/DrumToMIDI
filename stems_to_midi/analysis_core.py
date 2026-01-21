@@ -742,6 +742,118 @@ def classify_cymbal_pitch(pitches: np.ndarray) -> np.ndarray:
             return classifications
 
 
+def classify_snare_pitch(pitches: np.ndarray) -> np.ndarray:
+    """
+    Classify snare hits into 4 types using clustering.
+    
+    Pure function - no side effects.
+    
+    Types:
+    0 = snare (most common, mid-range pitch)
+    1 = rimshot (higher pitch, sharper)
+    2 = clap only (highest pitch, thin sound)
+    3 = clap+snare (layered, mid-high pitch)
+    
+    Note: Later can be enhanced with stereo info and envelope profile.
+    
+    Args:
+        pitches: Array of detected pitches in Hz
+    
+    Returns:
+        Array of classifications: 0=snare, 1=rimshot, 2=clap, 3=clap+snare
+    """
+    if len(pitches) == 0:
+        return np.array([])
+    
+    # Filter out failed detections (0 Hz)
+    valid_pitches = pitches[pitches > 0]
+    
+    if len(valid_pitches) == 0:
+        # If no valid pitches, default to snare
+        return np.zeros(len(pitches), dtype=int)
+    
+    # If only 1-3 unique pitches, simple grouping
+    unique_pitches = np.unique(valid_pitches)
+    
+    if len(unique_pitches) == 1:
+        # All same pitch - classify as snare
+        return np.zeros(len(pitches), dtype=int)
+    elif len(unique_pitches) == 2:
+        # Two types - split into snare and rimshot
+        threshold = np.mean(unique_pitches)
+        classifications = np.where(pitches < threshold, 0, 1)
+        classifications[pitches == 0] = 0  # Failed detections go to snare
+        return classifications
+    elif len(unique_pitches) == 3:
+        # Three types - use percentiles
+        p33 = np.percentile(valid_pitches, 33)
+        p66 = np.percentile(valid_pitches, 66)
+        
+        classifications = np.zeros(len(pitches), dtype=int)
+        for i, pitch in enumerate(pitches):
+            if pitch > 0:
+                if pitch < p33:
+                    classifications[i] = 0  # Snare (lower)
+                elif pitch > p66:
+                    classifications[i] = 2  # Clap (higher)
+                else:
+                    classifications[i] = 1  # Rimshot (mid)
+        return classifications
+    else:
+        # 4+ unique pitches - use k-means clustering with k=4
+        try:
+            from sklearn.cluster import KMeans
+            
+            # Reshape for sklearn
+            X = valid_pitches.reshape(-1, 1)
+            kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
+            kmeans.fit(X)
+            
+            # Sort clusters by center frequency (0=low, 1=mid-low, 2=mid-high, 3=high)
+            cluster_centers = kmeans.cluster_centers_.flatten()
+            sorted_cluster_indices = np.argsort(cluster_centers)
+            
+            # Map to snare types based on pitch order
+            # Lowest pitch = snare (0)
+            # Second = rimshot (1) 
+            # Third = clap+snare (3)
+            # Highest = clap only (2)
+            pitch_to_type = {sorted_cluster_indices[0]: 0,  # Lowest -> snare
+                           sorted_cluster_indices[1]: 1,  # Mid-low -> rimshot
+                           sorted_cluster_indices[2]: 3,  # Mid-high -> clap+snare
+                           sorted_cluster_indices[3]: 2}  # Highest -> clap
+            
+            # Classify all pitches (including failed detections)
+            classifications = np.zeros(len(pitches), dtype=int)  # Default to snare
+            valid_idx = 0
+            for i, pitch in enumerate(pitches):
+                if pitch > 0:
+                    cluster_label = kmeans.labels_[valid_idx]
+                    classifications[i] = pitch_to_type[cluster_label]
+                    valid_idx += 1
+            
+            return classifications
+            
+        except ImportError:
+            # Fallback: use percentiles to split into 4 groups
+            p25 = np.percentile(valid_pitches, 25)
+            p50 = np.percentile(valid_pitches, 50)
+            p75 = np.percentile(valid_pitches, 75)
+            
+            classifications = np.zeros(len(pitches), dtype=int)  # Default to snare
+            for i, pitch in enumerate(pitches):
+                if pitch > 0:
+                    if pitch < p25:
+                        classifications[i] = 0  # Snare (lowest)
+                    elif pitch < p50:
+                        classifications[i] = 1  # Rimshot
+                    elif pitch < p75:
+                        classifications[i] = 3  # Clap+Snare
+                    else:
+                        classifications[i] = 2  # Clap only (highest)
+            return classifications
+
+
 # ============================================================================
 # ONSET FILTERING AND ANALYSIS (Pure Functions)
 # ============================================================================

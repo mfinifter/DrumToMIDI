@@ -49,6 +49,9 @@ class DrumMapping:
     """MIDI note mapping for drum sounds (General MIDI standard)."""
     kick: int = 36          # C1 - Acoustic Bass Drum
     snare: int = 38         # D1 - Acoustic Snare
+    snare_rimshot: int = 37 # C#1 - Side Stick (Rimshot)
+    snare_clap: int = 39    # D#1 - Hand Clap
+    snare_clap_snare: int = 40  # E1 - Electric Snare (Clap+Snare layered)
     tom_low: int = 45       # A1 - Low Tom
     tom_mid: int = 47       # B1 - Mid Tom
     tom_high: int = 50      # D2 - High Tom
@@ -72,6 +75,9 @@ class DrumMapping:
         return cls(
             kick=config.get('kick', {}).get('midi_note', 36),
             snare=config.get('snare', {}).get('midi_note', 38),
+            snare_rimshot=config.get('snare', {}).get('midi_note_rimshot', 37),
+            snare_clap=config.get('snare', {}).get('midi_note_clap', 39),
+            snare_clap_snare=config.get('snare', {}).get('midi_note_clap_snare', 40),
             tom_low=config.get('toms', {}).get('midi_note_low', 45),
             tom_mid=config.get('toms', {}).get('midi_note_mid', 47),
             tom_high=config.get('toms', {}).get('midi_note_high', 50),

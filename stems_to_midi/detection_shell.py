@@ -212,6 +212,87 @@ def detect_cymbal_pitch(
             return 0.0
 
 
+def detect_snare_pitch(
+    audio: np.ndarray,
+    sr: int,
+    onset_time: float,
+    method: str = 'yin',
+    min_hz: float = 100.0,
+    max_hz: float = 500.0,
+    window_ms: float = 50.0
+) -> float:
+    """
+    Detect the pitch of a snare hit using YIN or pYIN algorithm.
+    
+    Used to distinguish between snare types: regular snare, rimshot, clap, clap+snare.
+    Note: Later can be enhanced with stereo info and envelope profile.
+    
+    Args:
+        audio: Audio signal (mono)
+        sr: Sample rate
+        onset_time: Time of onset in seconds
+        method: 'yin' or 'pyin' (pYIN is more robust but slower)
+        min_hz: Minimum expected pitch (100 Hz default for snares)
+        max_hz: Maximum expected pitch (500 Hz default for snares)
+        window_ms: Analysis window in milliseconds (shorter for snare)
+    
+    Returns:
+        Detected pitch in Hz, or 0 if detection failed
+    """
+    onset_sample = int(onset_time * sr)
+    window_samples = int(window_ms * sr / 1000.0)
+    end_sample = min(onset_sample + window_samples, len(audio))
+    
+    segment = audio[onset_sample:end_sample]
+    
+    if len(segment) < 512:
+        return 0.0
+    
+    try:
+        if method == 'pyin':
+            # More robust probabilistic YIN
+            f0, voiced_flag, voiced_probs = librosa.pyin(
+                segment,
+                fmin=min_hz,
+                fmax=max_hz,
+                sr=sr,
+                frame_length=2048
+            )
+            # Take median of confident detections
+            confident_pitches = f0[(voiced_flag) & (voiced_probs > 0.5)]
+            if len(confident_pitches) > 0:
+                pitch = np.median(confident_pitches[~np.isnan(confident_pitches)])
+                return float(pitch) if not np.isnan(pitch) else 0.0
+            else:
+                return 0.0
+        else:
+            # Standard YIN (faster)
+            f0 = librosa.yin(
+                segment,
+                fmin=min_hz,
+                fmax=max_hz,
+                sr=sr,
+                frame_length=2048
+            )
+            # Take median to smooth out jitter
+            pitch = np.median(f0[~np.isnan(f0)])
+            return float(pitch) if not np.isnan(pitch) else 0.0
+    except Exception:
+        # Fallback: use spectral peak as estimate
+        fft = np.fft.rfft(segment)
+        freqs = np.fft.rfftfreq(len(segment), 1/sr)
+        magnitude = np.abs(fft)
+        
+        # Find peak in expected range
+        mask = (freqs >= min_hz) & (freqs <= max_hz)
+        if np.any(mask):
+            peak_idx = np.argmax(magnitude[mask])
+            peak_freq = freqs[mask][peak_idx]
+            return float(peak_freq)
+        else:
+            return 0.0
+
+
 def detect_onsets(
     audio: np.ndarray,
     sr: int,

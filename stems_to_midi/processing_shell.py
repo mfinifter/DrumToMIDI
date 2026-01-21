@@ -18,7 +18,8 @@ from .analysis_core import (
     normalize_values,
     estimate_velocity,
     classify_tom_pitch,
-    classify_cymbal_pitch
+    classify_cymbal_pitch,
+    classify_snare_pitch
 )
 
 # Import detection functions
@@ -26,6 +27,7 @@ from .detection_shell import (
     detect_onsets,
     detect_tom_pitch,
     detect_cymbal_pitch,
+    detect_snare_pitch,
     detect_hihat_state
 )
 
@@ -297,6 +299,82 @@ def _detect_cymbal_pitches(
     return cymbal_classifications
 
 
+def _detect_snare_pitches(
+    audio: np.ndarray,
+    sr: int,
+    onset_times: np.ndarray,
+    config: Dict
+) -> Optional[np.ndarray]:
+    """
+    Detect and classify snare pitches.
+    
+    Helper function for process_stem_to_midi (imperative shell).
+    
+    Args:
+        audio: Audio signal
+        sr: Sample rate
+        onset_times: Times of detected onsets
+        config: Configuration dictionary
+    
+    Returns:
+        Array of snare classifications (0=snare, 1=rimshot, 2=clap, 3=clap+snare) or None
+    """
+    if len(onset_times) == 0:
+        return None
+    
+    snare_config = config.get('snare', {})
+    enable_pitch = snare_config.get('enable_pitch_detection', True)
+    
+    if not enable_pitch:
+        return None
+    
+    print("\n    Detecting snare pitch characteristics...")
+    pitch_method = snare_config.get('pitch_method', 'yin')
+    min_pitch = snare_config.get('min_pitch_hz', 100.0)
+    max_pitch = snare_config.get('max_pitch_hz', 500.0)
+    
+    # Detect pitch for each snare hit
+    detected_pitches = []
+    for onset_time in onset_times:
+        pitch = detect_snare_pitch(
+            audio, sr, onset_time, 
+            method=pitch_method,
+            min_hz=min_pitch,
+            max_hz=max_pitch
+        )
+        detected_pitches.append(pitch)
+    
+    detected_pitches = np.array(detected_pitches)
+    
+    # Show detected pitches
+    valid_pitches = detected_pitches[detected_pitches > 0]
+    if len(valid_pitches) > 0:
+        print(f"    Detected pitches: min={np.min(valid_pitches):.1f}Hz, max={np.max(valid_pitches):.1f}Hz, mean={np.mean(valid_pitches):.1f}Hz")
+        print(f"    Unique pitches: {len(np.unique(valid_pitches))}")
+    else:
+        print("    Warning: No valid pitches detected, all will use default (snare) note")
+    
+    # Classify into snare/rimshot/clap/clap+snare
+    snare_classifications = classify_snare_pitch(detected_pitches)
+    
+    # Show classification summary
+    snare_count = np.sum(snare_classifications == 0)
+    rimshot_count = np.sum(snare_classifications == 1)
+    clap_count = np.sum(snare_classifications == 2)
+    clap_snare_count = np.sum(snare_classifications == 3)
+    print(f"    Snare classification: {snare_count} snare, {rimshot_count} rimshot, {clap_count} clap, {clap_snare_count} clap+snare")
+    
+    # Show detailed pitch table (if not too many)
+    if len(onset_times) <= 20:
+        print(f"\n      {'Time':>8s} {'Pitch(Hz)':>10s} {'Type':>12s}")
+        for i, (time, pitch, classification) in enumerate(zip(onset_times, detected_pitches, snare_classifications)):
+            type_name = ['Snare', 'Rimshot', 'Clap', 'Clap+Snare'][classification]
+            pitch_str = f"{pitch:.1f}" if pitch > 0 else "N/A"
+            print(f"      {time:8.3f} {pitch_str:>10s} {type_name:>12s}")
+    
+    return snare_classifications
+
+
 def _create_midi_events(
     onset_times: np.ndarray,
     normalized_values: np.ndarray,
@@ -307,6 +385,7 @@ def _create_midi_events(
     hihat_states: List[str],
     tom_classifications: Optional[np.ndarray],
     cymbal_classifications: Optional[np.ndarray],
+    snare_classifications: Optional[np.ndarray],
     drum_mapping: DrumMapping,
     config: Dict,
     sustain_durations: Optional[List[float]] = None,
@@ -327,6 +406,7 @@ def _create_midi_events(
         hihat_states: List of hihat states (closed/open/handclap)
         tom_classifications: Tom classifications (low/mid/high)
         cymbal_classifications: Cymbal classifications (crash/ride/chinese)
+        snare_classifications: Snare classifications (snare/rimshot/clap/clap+snare)
         drum_mapping: MIDI note mapping
         config: Configuration dictionary
         sustain_durations: Optional list of sustain durations in milliseconds (for cymbals and hihat foot-close events)
@@ -349,7 +429,7 @@ def _create_midi_events(
         # Calculate velocity from normalized value
         velocity = estimate_velocity(value, min_velocity, max_velocity)
         
-        # Adjust note for handclap, open hi-hat, tom classification, or cymbal classification
+        # Adjust note for handclap, open hi-hat, tom/cymbal/snare classification
         if stem_type == 'hihat' and hihat_states[i] == 'handclap':
             midi_note = drum_mapping.handclap
         elif stem_type == 'hihat' and hihat_states[i] == 'open':
@@ -370,6 +450,16 @@ def _create_midi_events(
                 midi_note = drum_mapping.chinese
             else:  # ride or default
                 midi_note = drum_mapping.ride
+        elif stem_type == 'snare' and snare_classifications is not None and i < len(snare_classifications):
+            # Use snare/rimshot/clap/clap+snare note based on pitch classification
+            if snare_classifications[i] == 0:
+                midi_note = drum_mapping.snare
+            elif snare_classifications[i] == 1:
+                midi_note = drum_mapping.snare_rimshot
+            elif snare_classifications[i] == 2:
+                midi_note = drum_mapping.snare_clap
+            else:  # clap+snare
+                midi_note = drum_mapping.snare_clap_snare
         else:
             midi_note = note
         
@@ -785,6 +875,11 @@ def process_stem_to_midi(
     if stem_type == 'cymbals':
         cymbal_classifications = _detect_cymbal_pitches(audio, sr, onset_times, config)
     
+    # Step 8c: Detect and classify snare pitches (if applicable)
+    snare_classifications = None
+    if stem_type == 'snare':
+        snare_classifications = _detect_snare_pitches(audio, sr, onset_times, config)
+    
     # Step 9: Create MIDI events
     # Pass sustain durations for cymbals (note duration) and hihats (foot-close timing)
     if stem_type == 'cymbals':
@@ -804,6 +899,7 @@ def process_stem_to_midi(
         hihat_states,
         tom_classifications,
         cymbal_classifications,
+        snare_classifications,
         drum_mapping,
         config,
         sustain_durations=sustain_durations_param,
