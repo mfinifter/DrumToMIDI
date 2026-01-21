@@ -17,13 +17,15 @@ from .analysis_core import (
     filter_onsets_by_spectral,
     normalize_values,
     estimate_velocity,
-    classify_tom_pitch
+    classify_tom_pitch,
+    classify_cymbal_pitch
 )
 
 # Import detection functions
 from .detection_shell import (
     detect_onsets,
     detect_tom_pitch,
+    detect_cymbal_pitch,
     detect_hihat_state
 )
 
@@ -220,6 +222,81 @@ def _detect_tom_pitches(
     return tom_classifications
 
 
+def _detect_cymbal_pitches(
+    audio: np.ndarray,
+    sr: int,
+    onset_times: np.ndarray,
+    config: Dict
+) -> Optional[np.ndarray]:
+    """
+    Detect and classify cymbal pitches.
+    
+    Helper function for process_stem_to_midi (imperative shell).
+    
+    Args:
+        audio: Audio signal
+        sr: Sample rate
+        onset_times: Times of detected onsets
+        config: Configuration dictionary
+    
+    Returns:
+        Array of cymbal classifications (0=crash, 1=ride, 2=chinese) or None
+    """
+    if len(onset_times) == 0:
+        return None
+    
+    cymbal_config = config.get('cymbals', {})
+    enable_pitch = cymbal_config.get('enable_pitch_detection', True)
+    
+    if not enable_pitch:
+        return None
+    
+    print("\n    Detecting cymbal pitches...")
+    pitch_method = cymbal_config.get('pitch_method', 'yin')
+    min_pitch = cymbal_config.get('min_pitch_hz', 200.0)
+    max_pitch = cymbal_config.get('max_pitch_hz', 1000.0)
+    
+    # Detect pitch for each cymbal hit
+    detected_pitches = []
+    for onset_time in onset_times:
+        pitch = detect_cymbal_pitch(
+            audio, sr, onset_time, 
+            method=pitch_method,
+            min_hz=min_pitch,
+            max_hz=max_pitch
+        )
+        detected_pitches.append(pitch)
+    
+    detected_pitches = np.array(detected_pitches)
+    
+    # Show detected pitches
+    valid_pitches = detected_pitches[detected_pitches > 0]
+    if len(valid_pitches) > 0:
+        print(f"    Detected pitches: min={np.min(valid_pitches):.1f}Hz, max={np.max(valid_pitches):.1f}Hz, mean={np.mean(valid_pitches):.1f}Hz")
+        print(f"    Unique pitches: {len(np.unique(valid_pitches))}")
+    else:
+        print("    Warning: No valid pitches detected, all cymbals will use default (crash) note")
+    
+    # Classify into crash/ride/chinese
+    cymbal_classifications = classify_cymbal_pitch(detected_pitches)
+    
+    # Show classification summary
+    crash_count = np.sum(cymbal_classifications == 0)
+    ride_count = np.sum(cymbal_classifications == 1)
+    chinese_count = np.sum(cymbal_classifications == 2)
+    print(f"    Cymbal classification: {crash_count} crash, {ride_count} ride, {chinese_count} chinese")
+    
+    # Show detailed pitch table (if not too many)
+    if len(onset_times) <= 20:
+        print(f"\n      {'Time':>8s} {'Pitch(Hz)':>10s} {'Cymbal':>8s}")
+        for i, (time, pitch, classification) in enumerate(zip(onset_times, detected_pitches, cymbal_classifications)):
+            cymbal_name = ['Crash', 'Ride', 'Chinese'][classification]
+            pitch_str = f"{pitch:.1f}" if pitch > 0 else "N/A"
+            print(f"      {time:8.3f} {pitch_str:>10s} {cymbal_name:>8s}")
+    
+    return cymbal_classifications
+
+
 def _create_midi_events(
     onset_times: np.ndarray,
     normalized_values: np.ndarray,
@@ -229,6 +306,7 @@ def _create_midi_events(
     max_velocity: int,
     hihat_states: List[str],
     tom_classifications: Optional[np.ndarray],
+    cymbal_classifications: Optional[np.ndarray],
     drum_mapping: DrumMapping,
     config: Dict,
     sustain_durations: Optional[List[float]] = None,
@@ -248,6 +326,7 @@ def _create_midi_events(
         max_velocity: Maximum MIDI velocity
         hihat_states: List of hihat states (closed/open/handclap)
         tom_classifications: Tom classifications (low/mid/high)
+        cymbal_classifications: Cymbal classifications (crash/ride/chinese)
         drum_mapping: MIDI note mapping
         config: Configuration dictionary
         sustain_durations: Optional list of sustain durations in milliseconds (for cymbals and hihat foot-close events)
@@ -270,7 +349,7 @@ def _create_midi_events(
         # Calculate velocity from normalized value
         velocity = estimate_velocity(value, min_velocity, max_velocity)
         
-        # Adjust note for handclap, open hi-hat, or tom classification
+        # Adjust note for handclap, open hi-hat, tom classification, or cymbal classification
         if stem_type == 'hihat' and hihat_states[i] == 'handclap':
             midi_note = drum_mapping.handclap
         elif stem_type == 'hihat' and hihat_states[i] == 'open':
@@ -283,6 +362,14 @@ def _create_midi_events(
                 midi_note = drum_mapping.tom_high
             else:  # mid or default
                 midi_note = drum_mapping.tom_mid
+        elif stem_type == 'cymbals' and cymbal_classifications is not None and i < len(cymbal_classifications):
+            # Use crash/ride/chinese note based on pitch classification
+            if cymbal_classifications[i] == 0:
+                midi_note = drum_mapping.crash
+            elif cymbal_classifications[i] == 2:
+                midi_note = drum_mapping.chinese
+            else:  # ride or default
+                midi_note = drum_mapping.ride
         else:
             midi_note = note
         
@@ -693,6 +780,11 @@ def process_stem_to_midi(
     if stem_type == 'toms':
         tom_classifications = _detect_tom_pitches(audio, sr, onset_times, config)
     
+    # Step 8b: Detect and classify cymbal pitches (if applicable)
+    cymbal_classifications = None
+    if stem_type == 'cymbals':
+        cymbal_classifications = _detect_cymbal_pitches(audio, sr, onset_times, config)
+    
     # Step 9: Create MIDI events
     # Pass sustain durations for cymbals (note duration) and hihats (foot-close timing)
     if stem_type == 'cymbals':
@@ -711,6 +803,7 @@ def process_stem_to_midi(
         max_velocity,
         hihat_states,
         tom_classifications,
+        cymbal_classifications,
         drum_mapping,
         config,
         sustain_durations=sustain_durations_param,

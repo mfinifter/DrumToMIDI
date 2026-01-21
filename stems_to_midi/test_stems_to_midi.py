@@ -598,6 +598,7 @@ class TestFootCloseEvents:
             max_velocity=110,
             hihat_states=hihat_states,
             tom_classifications=None,
+            cymbal_classifications=None,
             drum_mapping=drum_mapping,
             config=config,
             sustain_durations=sustain_durations
@@ -644,6 +645,7 @@ class TestFootCloseEvents:
             max_velocity=110,
             hihat_states=hihat_states,
             tom_classifications=None,
+            cymbal_classifications=None,
             drum_mapping=drum_mapping,
             config=config,
             sustain_durations=sustain_durations
@@ -678,6 +680,7 @@ class TestFootCloseEvents:
             max_velocity=110,
             hihat_states=hihat_states,
             tom_classifications=None,
+            cymbal_classifications=None,
             drum_mapping=drum_mapping,
             config=config,
             sustain_durations=sustain_durations
@@ -721,6 +724,7 @@ class TestFootCloseEvents:
             max_velocity=110,
             hihat_states=hihat_states,
             tom_classifications=None,
+            cymbal_classifications=None,
             drum_mapping=drum_mapping,
             config=config,
             sustain_durations=sustain_durations
@@ -761,6 +765,7 @@ class TestFootCloseEvents:
             max_velocity=110,
             hihat_states=['closed'],  # Not used for cymbals
             tom_classifications=None,
+            cymbal_classifications=None,
             drum_mapping=drum_mapping,
             config=config,
             sustain_durations=sustain_durations

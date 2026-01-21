@@ -56,6 +56,7 @@ class DrumMapping:
     hihat_open: int = 46    # A#1 - Open Hi-Hat
     crash: int = 49         # C#2 - Crash Cymbal 1
     ride: int = 51          # D#2 - Ride Cymbal 1
+    chinese: int = 52       # E2 - Chinese Cymbal
     
     @classmethod
     def from_config(cls, config: Dict) -> 'DrumMapping':
@@ -76,8 +77,9 @@ class DrumMapping:
             tom_high=config.get('toms', {}).get('midi_note_high', 50),
             hihat_closed=config.get('hihat', {}).get('midi_note_closed', 42),
             hihat_open=config.get('hihat', {}).get('midi_note_open', 46),
-            crash=config.get('cymbals', {}).get('midi_note', 49),
-            ride=config.get('cymbals', {}).get('midi_note', 51)  # Future support for ride
+            crash=config.get('cymbals', {}).get('midi_note_crash', 49),
+            ride=config.get('cymbals', {}).get('midi_note_ride', 51),
+            chinese=config.get('cymbals', {}).get('midi_note_chinese', 52)
         )
     
     # Aliases for convenience

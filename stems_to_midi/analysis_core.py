@@ -622,6 +622,30 @@ def classify_tom_pitch(pitches: np.ndarray) -> np.ndarray:
         # 3+ unique pitches - use k-means clustering with k=3
         try:
             from sklearn.cluster import KMeans
+            
+            # Reshape for sklearn
+            X = valid_pitches.reshape(-1, 1)
+            kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+            kmeans.fit(X)
+            
+            # Sort clusters by center frequency (0=low, 1=mid, 2=high)
+            cluster_centers = kmeans.cluster_centers_.flatten()
+            sorted_cluster_indices = np.argsort(cluster_centers)
+            
+            # Map cluster labels to sorted positions
+            label_mapping = {old: new for new, old in enumerate(sorted_cluster_indices)}
+            
+            # Classify all pitches (including failed detections)
+            classifications = np.ones(len(pitches), dtype=int)  # Default to mid
+            valid_idx = 0
+            for i, pitch in enumerate(pitches):
+                if pitch > 0:
+                    cluster_label = kmeans.labels_[valid_idx]
+                    classifications[i] = label_mapping[cluster_label]
+                    valid_idx += 1
+            
+            return classifications
+            
         except ImportError:
             # Fallback: use percentiles to split into 3 groups
             p33 = np.percentile(valid_pitches, 33)
@@ -637,36 +661,85 @@ def classify_tom_pitch(pitches: np.ndarray) -> np.ndarray:
                     else:
                         classifications[i] = 1  # Mid
             return classifications
-        
-        # Reshape for sklearn
-        valid_pitches_2d = valid_pitches.reshape(-1, 1)
-        
-        # Cluster into 3 groups
-        n_clusters = min(3, len(unique_pitches))
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        kmeans.fit(valid_pitches_2d)
-        
-        # Sort cluster centers to get low/mid/high order
-        cluster_centers = kmeans.cluster_centers_.flatten()
-        sorted_indices = np.argsort(cluster_centers)
-        
-        # Create mapping from cluster label to tom classification
-        cluster_to_tom = {sorted_indices[i]: i for i in range(n_clusters)}
-        
-        # If only 2 clusters, use 0 (low) and 2 (high), skip mid
-        if n_clusters == 2:
-            cluster_to_tom = {sorted_indices[0]: 0, sorted_indices[1]: 2}
-        
-        # Classify all pitches
-        classifications = np.ones(len(pitches), dtype=int)  # Default to mid
-        
-        for i, pitch in enumerate(pitches):
-            if pitch > 0:
-                # Find which cluster this pitch belongs to
-                cluster = kmeans.predict([[pitch]])[0]
-                classifications[i] = cluster_to_tom[cluster]
-        
+
+
+def classify_cymbal_pitch(pitches: np.ndarray) -> np.ndarray:
+    """
+    Classify cymbal pitches into crash/ride/chinese groups using clustering.
+    
+    Pure function - no side effects.
+    
+    Args:
+        pitches: Array of detected pitches in Hz
+    
+    Returns:
+        Array of classifications: 0=crash, 1=ride, 2=chinese
+    """
+    if len(pitches) == 0:
+        return np.array([])
+    
+    # Filter out failed detections (0 Hz)
+    valid_pitches = pitches[pitches > 0]
+    
+    if len(valid_pitches) == 0:
+        # If no valid pitches, default to crash
+        return np.zeros(len(pitches), dtype=int)
+    
+    # If only 1-2 unique pitches, simple grouping
+    unique_pitches = np.unique(valid_pitches)
+    
+    if len(unique_pitches) == 1:
+        # All same pitch - classify as crash
+        return np.zeros(len(pitches), dtype=int)
+    elif len(unique_pitches) == 2:
+        # Two cymbals - split into crash and chinese
+        threshold = np.mean(unique_pitches)
+        classifications = np.where(pitches < threshold, 0, 2)
+        classifications[pitches == 0] = 0  # Failed detections go to crash
         return classifications
+    else:
+        # 3+ unique pitches - use k-means clustering with k=3
+        try:
+            from sklearn.cluster import KMeans
+            
+            # Reshape for sklearn
+            X = valid_pitches.reshape(-1, 1)
+            kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+            kmeans.fit(X)
+            
+            # Sort clusters by center frequency (0=crash, 1=ride, 2=chinese)
+            cluster_centers = kmeans.cluster_centers_.flatten()
+            sorted_cluster_indices = np.argsort(cluster_centers)
+            
+            # Map cluster labels to sorted positions
+            label_mapping = {old: new for new, old in enumerate(sorted_cluster_indices)}
+            
+            # Classify all pitches (including failed detections)
+            classifications = np.zeros(len(pitches), dtype=int)  # Default to crash
+            valid_idx = 0
+            for i, pitch in enumerate(pitches):
+                if pitch > 0:
+                    cluster_label = kmeans.labels_[valid_idx]
+                    classifications[i] = label_mapping[cluster_label]
+                    valid_idx += 1
+            
+            return classifications
+            
+        except ImportError:
+            # Fallback: use percentiles to split into 3 groups
+            p33 = np.percentile(valid_pitches, 33)
+            p66 = np.percentile(valid_pitches, 66)
+            
+            classifications = np.zeros(len(pitches), dtype=int)  # Default to crash
+            for i, pitch in enumerate(pitches):
+                if pitch > 0:
+                    if pitch < p33:
+                        classifications[i] = 0  # Crash (lower)
+                    elif pitch > p66:
+                        classifications[i] = 2  # Chinese (higher)
+                    else:
+                        classifications[i] = 1  # Ride (mid)
+            return classifications
 
 
 # ============================================================================
