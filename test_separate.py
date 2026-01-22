@@ -6,7 +6,6 @@ Tests the integration between separate.py and project_manager.
 
 import pytest
 from unittest.mock import Mock, patch
-from pathlib import Path
 
 from project_manager import create_project
 from separation_shell import process_stems_for_project
@@ -98,7 +97,7 @@ class TestSeparateIntegration:
                     device='cpu',
                     verbose=False
                 )
-            except (RuntimeError, FileNotFoundError, AttributeError, ValueError) as e:
+            except (RuntimeError, FileNotFoundError, AttributeError, ValueError):
                 # These errors are OK - we're just testing the signature works
                 # RuntimeError: checkpoint not found
                 # FileNotFoundError: audio processing issues

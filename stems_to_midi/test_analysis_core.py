@@ -18,7 +18,6 @@ from stems_to_midi.analysis_core import (
     estimate_velocity,
     classify_tom_pitch,
     filter_onsets_by_spectral,
-    calculate_velocities_from_features,
     calculate_threshold_from_distributions,
     calculate_classification_accuracy,
     predict_classification,
@@ -1600,18 +1599,18 @@ class TestCalculateVelocitiesFromFeatures:
     
     def test_empty_features(self):
         """Empty feature array should return empty velocities"""
-        from stems_to_midi.analysis_core import calculate_velocities_from_features
+        from stems_to_midi.analysis_core import calculate_velocities_from_features as calc_vels
         
-        result = calculate_velocities_from_features(np.array([]), 40, 127)
+        result = calc_vels(np.array([]), 40, 127)
         
         assert len(result) == 0
     
     def test_normalized_features(self):
         """Normalized features should map to velocity range"""
-        from stems_to_midi.analysis_core import calculate_velocities_from_features
+        from stems_to_midi.analysis_core import calculate_velocities_from_features as calc_vels
         
         features = np.array([0.0, 0.5, 1.0])
-        result = calculate_velocities_from_features(features, 40, 127)
+        result = calc_vels(features, 40, 127)
         
         assert len(result) == 3
         # Should be in ascending order

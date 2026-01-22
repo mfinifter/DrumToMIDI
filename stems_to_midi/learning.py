@@ -13,7 +13,7 @@ import numpy as np
 import librosa
 import soundfile as sf
 from pathlib import Path
-from typing import Dict, Union, Optional, List
+from typing import Dict, Union, Optional
 import yaml
 import copy
 
@@ -32,14 +32,8 @@ from .midi import read_midi_notes
 # Import data structures
 from .config import DrumMapping
 
-# Import contract types
-try:
-    from midi_types import SpectralOnsetData, SPECTRAL_REQUIRED_FIELDS
-except ImportError:
-    import sys
-    from pathlib import Path as PathLib
-    sys.path.insert(0, str(PathLib(__file__).parent.parent))
-    from midi_types import SpectralOnsetData, SPECTRAL_REQUIRED_FIELDS
+# Note: midi_types module is available for compatibility contracts
+# but specific imports may not be directly used in this file
 
 __all__ = [
     'learn_threshold_from_midi',

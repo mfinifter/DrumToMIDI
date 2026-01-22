@@ -2,7 +2,7 @@
 Shared utilities for drum separation.
 """
 from pathlib import Path
-from typing import Union, Optional, Dict
+from typing import Optional, Dict
 import soundfile as sf # type: ignore
 import torch # type: ignore
 import torchaudio # type: ignore

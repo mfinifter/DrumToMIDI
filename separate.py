@@ -17,7 +17,6 @@ from project_manager import (
     create_project,
     select_project,
     get_project_by_number,
-    get_project_config,
     update_project_metadata,
     USER_FILES_DIR
 )

@@ -14,15 +14,8 @@ import numpy as np
 from typing import Tuple, Dict, Optional, List
 from scipy.signal import medfilt
 
-# Import contract types for documentation/validation
-try:
-    from midi_types import SpectralOnsetData, SPECTRAL_REQUIRED_FIELDS
-except ImportError:
-    # Running from stems_to_midi/ directly
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from midi_types import SpectralOnsetData, SPECTRAL_REQUIRED_FIELDS
+# Note: SPECTRAL_REQUIRED_FIELDS is kept for compatibility with midi_types module contract,
+# but may not be directly imported here
 
 
 # ============================================================================

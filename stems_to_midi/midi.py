@@ -16,11 +16,10 @@ from .analysis_core import prepare_midi_events_for_writing
 
 # Import contract for validation
 try:
-    from midi_types import SPECTRAL_REQUIRED_FIELDS
+    pass
 except ImportError:
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from midi_types import SPECTRAL_REQUIRED_FIELDS
 
 __all__ = [
     'create_midi_file',
