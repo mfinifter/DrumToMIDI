@@ -411,6 +411,45 @@ class TestSidechainIntegration:
         # Should complete without error
         assert len(compressed) == len(main)
         assert 'max_gain_reduction_db' in stats
+    
+    def test_real_world_cymbals_hihat_scenario(self):
+        """Simulate real-world cymbals cleanup with hihat bleed"""
+        sr = 44100
+        duration = 1.0
+        samples = int(sr * duration)
+        
+        # Create synthetic cymbal crash (sustained high freq at t=0.2s)
+        t = np.linspace(0, duration, samples)
+        cymbal = np.sin(2 * np.pi * 8000 * t) * np.exp(-t * 3) * 0.6
+        
+        # Create synthetic hihat bleed in cymbals track (sharp transient at t=0.5s)
+        hihat_bleed = np.sin(2 * np.pi * 10000 * t) * np.exp(-(t - 0.5)**2 * 200) * 0.4
+        
+        # Main audio = cymbals + hihat bleed
+        main = cymbal + hihat_bleed
+        
+        # Sidechain = isolated hihat
+        sidechain = hihat_bleed * 2  # Stronger signal
+        
+        # Apply sidechain compression
+        compressed, stats = sidechain_compress(
+            main, sidechain, sr=sr,
+            threshold_db=-30.0, ratio=10.0,
+            attack_ms=1.0, release_ms=100.0
+        )
+        
+        # Verify compression occurred
+        assert stats['samples_compressed'] > 0
+        
+        # Verify hihat region (around t=0.5s) is reduced
+        hihat_region_start = int(0.45 * sr)
+        hihat_region_end = int(0.55 * sr)
+        
+        main_hihat_power = np.mean(main[hihat_region_start:hihat_region_end] ** 2)
+        compressed_hihat_power = np.mean(compressed[hihat_region_start:hihat_region_end] ** 2)
+        
+        # Compressed version should have less power in hihat region
+        assert compressed_hihat_power < main_hihat_power
 
 
 if __name__ == '__main__':
