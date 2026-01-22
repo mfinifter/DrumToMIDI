@@ -81,7 +81,11 @@ Separates drums into individual stems (kick, snare, hi-hat, cymbals, toms) using
 ```bash
 python sidechain_cleanup.py
 ```
-This optional step removes sound from the kick drum track at the moment a snare sound is present in the snare track. It's used to remove "bleed through" of the snare which may be present in the kick track.
+This optional step removes bleed between drum stems using sidechain compression:
+- Removes snare bleed from the kick track
+- Removes hihat bleed from the cymbals track
+
+Use `--no-clean-cymbals` to skip cymbal cleaning and only process kick.
 
 ### 3. Convert stems to MIDI
 ```bash
