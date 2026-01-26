@@ -11,6 +11,31 @@ Bugs are now tracked in GitHub Issues: https://github.com/EverlastEngineering/Dr
 
 ## Open Bugs (Not Yet in GitHub)
 
+### CPU underutilization during MDX23C stem separation on macOS
+- **Status**: Fixed
+- **Priority**: High
+- **Description**: When using MDX23C model with CPU inference on macOS, only ~55% CPU utilization observed with work distributed to efficiency cores instead of performance cores
+- **Root Cause**: PyTorch default threading configuration limited to 4 threads (likely defaulting to physical core count), while system has 8 cores (4 performance + 4 efficiency)
+- **Expected Behavior**: Full CPU utilization across all cores, prioritizing performance cores
+- **Actual Behavior**: Only 4 threads used, resulting in ~55% CPU usage with efficiency cores engaged
+- **Steps to Reproduce**: 
+  1. Run stem separation with MDX23C model on Mac with device=cpu
+  2. Observe CPU usage in Activity Monitor
+  3. Notice low utilization (~55%) and efficiency core usage
+- **Fixed**: 2026-01-25
+- **Solution**: Added `_configure_cpu_threading()` method to `OptimizedMDX23CProcessor.__init__()`:
+  - Detects total CPU core count using `multiprocessing.cpu_count()`
+  - On macOS, detects performance vs efficiency core split using `sysctl`
+  - Configures PyTorch: `torch.set_num_threads()` to use all cores
+  - Sets `OMP_NUM_THREADS` and `MKL_NUM_THREADS` environment variables
+  - Now uses 8 threads (100% utilization) instead of 4 threads (55% utilization)
+- **Impact**: Should significantly improve CPU-based stem separation performance on macOS
+- **Files Modified**: `mdx23c_optimized.py`
+
+---
+
+## Open Bugs (Not Yet in GitHub - Original)
+
 ### Cymbals appeared missing due to --maxtime truncation
 - **Status**: Closed (User Error / Testing Bug)
 - **Priority**: N/A

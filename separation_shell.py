@@ -195,9 +195,11 @@ def process_stems_for_project(
                     # CUDA: use larger batches
                     batch_size = min(8, max(2, 16 // overlap))
                 elif device == "mps":
-                    # MPS: Always use batch_size=1 for optimal performance
-                    # Benchmarks show batch_size=1 is faster than 2 or 4 even at low overlap
-                    batch_size = 1
+                    # MPS: Use moderate batch sizes for better GPU utilization
+                    # Previous benchmarks used batch_size=1, but higher batches
+                    # improve GPU utilization and may be faster on newer hardware
+                    # Force minimum of 2, even at high overlap
+                    batch_size = max(2, min(4, 8 // overlap))
                 else:
                     # CPU: smaller batches to avoid memory issues
                     batch_size = min(4, max(1, 8 // overlap))
@@ -220,6 +222,9 @@ def process_stems_for_project(
                 print(f"  Overlap: {overlap} (hop={separator.chunk_size//overlap} samples)")
                 if device == "cuda":
                     print("  Mixed Precision: Enabled (fp16)")
+                elif device == "mps":
+                    print("  🎮 MPS GPU acceleration enabled")
+                    print(f"  💡 Tip: Monitor GPU usage with 'sudo powermetrics --samplers gpu_power'")
             print("Progress: 10%")
         else:
             # Fallback to original implementation
