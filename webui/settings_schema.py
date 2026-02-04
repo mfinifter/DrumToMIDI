@@ -49,6 +49,8 @@ class SettingCategory(str, Enum):
     TOMS = 'toms'
     HIHAT = 'hihat'
     CYMBALS = 'cymbals'
+    CLUSTERING = 'clustering'
+    THRESHOLD_OPTIMIZATION = 'threshold_optimization'
     DEBUG = 'debug'
     LEARNING = 'learning_mode'
     SEPARATION = 'separation'
@@ -495,6 +497,17 @@ SETTINGS_REGISTRY: List[SettingDefinition] = [
         yaml_path=['kick', 'geomean_threshold'],
     ),
     
+    SettingDefinition(
+        key='kick_use_stereo',
+        type=SettingType.BOOL,
+        default=False,
+        label='Use Stereo Processing',
+        description='Process kick in stereo to use pan position for identification (kick is typically centered, so usually disabled)',
+        category=SettingCategory.KICK,
+        ui_control=UIControl.CHECKBOX,
+        yaml_path=['kick', 'use_stereo'],
+    ),
+    
     # Snare MIDI note
     SettingDefinition(
         key='snare_midi_note',
@@ -509,6 +522,17 @@ SETTINGS_REGISTRY: List[SettingDefinition] = [
         step=1,
         yaml_path=['snare', 'midi_note'],
         advanced=True,
+    ),
+    
+    SettingDefinition(
+        key='snare_use_stereo',
+        type=SettingType.BOOL,
+        default=True,
+        label='Use Stereo Processing',
+        description='Process snare in stereo to use pan position for identification (ghost notes and rimshots may be panned)',
+        category=SettingCategory.SNARE,
+        ui_control=UIControl.CHECKBOX,
+        yaml_path=['snare', 'use_stereo'],
     ),
     
     # Toms MIDI notes
@@ -557,6 +581,17 @@ SETTINGS_REGISTRY: List[SettingDefinition] = [
         advanced=True,
     ),
     
+    SettingDefinition(
+        key='toms_use_stereo',
+        type=SettingType.BOOL,
+        default=True,
+        label='Use Stereo Processing',
+        description='Process toms in stereo to use pan position for low/mid/high identification (toms are often panned left to right)',
+        category=SettingCategory.TOMS,
+        ui_control=UIControl.CHECKBOX,
+        yaml_path=['toms', 'use_stereo'],
+    ),
+    
     # Hi-hat settings
     SettingDefinition(
         key='hihat_midi_note_closed',
@@ -588,6 +623,17 @@ SETTINGS_REGISTRY: List[SettingDefinition] = [
         advanced=True,
     ),
     
+    SettingDefinition(
+        key='hihat_use_stereo',
+        type=SettingType.BOOL,
+        default=True,
+        label='Use Stereo Processing',
+        description='Process hi-hat in stereo to use pan position for better detection (hi-hat may be off-center)',
+        category=SettingCategory.HIHAT,
+        ui_control=UIControl.CHECKBOX,
+        yaml_path=['hihat', 'use_stereo'],
+    ),
+    
     # Cymbals MIDI note
     SettingDefinition(
         key='cymbals_midi_note',
@@ -601,6 +647,219 @@ SETTINGS_REGISTRY: List[SettingDefinition] = [
         max_value=127,
         step=1,
         yaml_path=['cymbals', 'midi_note'],
+        advanced=True,
+    ),
+    
+    SettingDefinition(
+        key='cymbals_use_stereo',
+        type=SettingType.BOOL,
+        default=True,
+        label='Use Stereo Processing',
+        description='Process cymbals in stereo to use pan position for crash/ride distinction (cymbals are often panned left/right)',
+        category=SettingCategory.CYMBALS,
+        ui_control=UIControl.CHECKBOX,
+        yaml_path=['cymbals', 'use_stereo'],
+    ),
+    
+    # Kick Clustering
+    SettingDefinition(
+        key='kick_onset_merge_window_ms',
+        type=SettingType.INT,
+        default=100,
+        label='Onset Merge Window (ms)',
+        description='Merge L/R channel onsets within this time window (milliseconds)',
+        category=SettingCategory.KICK,
+        ui_control=UIControl.NUMBER,
+        min_value=10,
+        max_value=500,
+        step=10,
+        yaml_path=['kick', 'onset_merge_window_ms'],
+        advanced=True,
+    ),
+    
+    SettingDefinition(
+        key='kick_expected_clusters',
+        type=SettingType.INT,
+        default=1,
+        label='Expected Clusters',
+        description='Expected number of distinct kick sounds (1 = single kick)',
+        category=SettingCategory.KICK,
+        ui_control=UIControl.NUMBER,
+        min_value=1,
+        max_value=5,
+        step=1,
+        yaml_path=['kick', 'expected_clusters'],
+        advanced=True,
+    ),
+    
+    # Snare Clustering
+    SettingDefinition(
+        key='snare_onset_merge_window_ms',
+        type=SettingType.INT,
+        default=100,
+        label='Onset Merge Window (ms)',
+        description='Merge L/R channel onsets within this time window (milliseconds)',
+        category=SettingCategory.SNARE,
+        ui_control=UIControl.NUMBER,
+        min_value=10,
+        max_value=500,
+        step=10,
+        yaml_path=['snare', 'onset_merge_window_ms'],
+        advanced=True,
+    ),
+    
+    SettingDefinition(
+        key='snare_expected_clusters',
+        type=SettingType.INT,
+        default=1,
+        label='Expected Clusters',
+        description='Expected number of distinct snare sounds (1 = single snare, 2 = snare + side-stick)',
+        category=SettingCategory.SNARE,
+        ui_control=UIControl.NUMBER,
+        min_value=1,
+        max_value=5,
+        step=1,
+        yaml_path=['snare', 'expected_clusters'],
+        advanced=True,
+    ),
+    
+    # Toms Clustering
+    SettingDefinition(
+        key='toms_onset_merge_window_ms',
+        type=SettingType.INT,
+        default=100,
+        label='Onset Merge Window (ms)',
+        description='Merge L/R channel onsets within this time window (milliseconds)',
+        category=SettingCategory.TOMS,
+        ui_control=UIControl.NUMBER,
+        min_value=10,
+        max_value=500,
+        step=10,
+        yaml_path=['toms', 'onset_merge_window_ms'],
+        advanced=True,
+    ),
+    
+    # Hihat Clustering
+    SettingDefinition(
+        key='hihat_onset_merge_window_ms',
+        type=SettingType.INT,
+        default=100,
+        label='Onset Merge Window (ms)',
+        description='Merge L/R channel onsets within this time window (milliseconds)',
+        category=SettingCategory.HIHAT,
+        ui_control=UIControl.NUMBER,
+        min_value=10,
+        max_value=500,
+        step=10,
+        yaml_path=['hihat', 'onset_merge_window_ms'],
+        advanced=True,
+    ),
+    
+    SettingDefinition(
+        key='hihat_expected_clusters',
+        type=SettingType.INT,
+        default=2,
+        label='Expected Clusters',
+        description='Expected number of distinct hihat sounds (2 = open + closed)',
+        category=SettingCategory.HIHAT,
+        ui_control=UIControl.NUMBER,
+        min_value=1,
+        max_value=5,
+        step=1,
+        yaml_path=['hihat', 'expected_clusters'],
+        advanced=True,
+    ),
+    
+    # Cymbals Clustering
+    SettingDefinition(
+        key='cymbals_onset_merge_window_ms',
+        type=SettingType.INT,
+        default=100,
+        label='Onset Merge Window (ms)',
+        description='Merge L/R channel onsets within this time window (milliseconds)',
+        category=SettingCategory.CYMBALS,
+        ui_control=UIControl.NUMBER,
+        min_value=10,
+        max_value=500,
+        step=10,
+        yaml_path=['cymbals', 'onset_merge_window_ms'],
+        advanced=True,
+    ),
+    
+    SettingDefinition(
+        key='cymbals_expected_clusters',
+        type=SettingType.INT,
+        default=2,
+        label='Expected Clusters',
+        description='Expected number of distinct cymbals (e.g., 2 = left crash + right crash)',
+        category=SettingCategory.CYMBALS,
+        ui_control=UIControl.NUMBER,
+        min_value=1,
+        max_value=5,
+        step=1,
+        yaml_path=['cymbals', 'expected_clusters'],
+        advanced=True,
+    ),
+    
+    # ===================
+    # Clustering Settings
+    # ===================
+    
+    SettingDefinition(
+        key='clustering_method',
+        type=SettingType.CHOICE,
+        default='dbscan',
+        label='Clustering Method',
+        description='Algorithm for grouping similar onsets (DBSCAN = density-based, k-means = centroid-based)',
+        category=SettingCategory.CLUSTERING,
+        ui_control=UIControl.SELECT,
+        allowed_values=['dbscan', 'kmeans'],
+        yaml_path=['clustering', 'method'],
+        advanced=True,
+    ),
+    
+    # =============================
+    # Threshold Optimization Settings
+    # =============================
+    
+    SettingDefinition(
+        key='threshold_optimization_enabled',
+        type=SettingType.BOOL,
+        default=False,
+        label='Enable Threshold Optimization',
+        description='Automatically discover optimal thresholds by iterating until cluster count matches expected',
+        category=SettingCategory.THRESHOLD_OPTIMIZATION,
+        ui_control=UIControl.CHECKBOX,
+        yaml_path=['threshold_optimization', 'enabled'],
+    ),
+    
+    SettingDefinition(
+        key='threshold_optimization_max_iterations',
+        type=SettingType.INT,
+        default=20,
+        label='Max Iterations',
+        description='Maximum number of optimization iterations before giving up',
+        category=SettingCategory.THRESHOLD_OPTIMIZATION,
+        ui_control=UIControl.NUMBER,
+        min_value=5,
+        max_value=100,
+        step=5,
+        yaml_path=['threshold_optimization', 'max_iterations'],
+        advanced=True,
+    ),
+    
+    SettingDefinition(
+        key='threshold_optimization_tolerance',
+        type=SettingType.INT,
+        default=0,
+        label='Cluster Count Tolerance',
+        description='Stop when cluster count is within ±N of expected (0 = exact match required)',
+        category=SettingCategory.THRESHOLD_OPTIMIZATION,
+        ui_control=UIControl.NUMBER,
+        min_value=0,
+        max_value=5,
+        step=1,
+        yaml_path=['threshold_optimization', 'tolerance'],
         advanced=True,
     ),
     

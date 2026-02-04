@@ -195,11 +195,9 @@ def process_stems_for_project(
                     # CUDA: use larger batches
                     batch_size = min(8, max(2, 16 // overlap))
                 elif device == "mps":
-                    # MPS: Use moderate batch sizes for better GPU utilization
-                    # Previous benchmarks used batch_size=1, but higher batches
-                    # improve GPU utilization and may be faster on newer hardware
-                    # Force minimum of 2, even at high overlap
-                    batch_size = max(2, min(4, 8 // overlap))
+                    # MPS: With 16GB RAM on M1/M2, batch size of two seems best
+                    # More testing needed for different models/devices
+                    batch_size = 2
                 else:
                     # CPU: smaller batches to avoid memory issues
                     batch_size = min(4, max(1, 8 // overlap))

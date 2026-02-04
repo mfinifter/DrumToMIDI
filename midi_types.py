@@ -74,6 +74,79 @@ class SpectralOnsetData(TypedDict):
     energy_label_2: NotRequired[str]
 
 
+class StereoOnsetData(TypedDict):
+    """Stereo onset detection results from left, right, and mono channels.
+    
+    Used when processing audio in stereo mode (use_stereo=True) to capture
+    spatial information for better instrument identification.
+    
+    Fields:
+        left_onsets: Onset times detected in left channel (seconds)
+        right_onsets: Onset times detected in right channel (seconds)
+        mono_onsets: Onset times detected in mono (averaged) channel (seconds)
+        left_strengths: Onset strengths for left channel detections (0-1)
+        right_strengths: Onset strengths for right channel detections (0-1)
+    """
+    left_onsets: List[float]
+    right_onsets: List[float]
+    mono_onsets: List[float]
+    left_strengths: List[float]
+    right_strengths: List[float]
+
+
+class DualChannelOnsetData(TypedDict):
+    """Dual-channel onset detection with merged onsets and per-channel strengths.
+    
+    Used for clustering-based threshold optimization. Runs onset detection
+    separately on L/R channels, then merges nearby detections into unified
+    onset list with strength from both channels.
+    
+    Fields:
+        onset_times: Merged onset times (seconds) - union of L/R detections
+        left_strengths: Onset strength from left channel for each merged onset
+        right_strengths: Onset strength from right channel for each merged onset
+        pan_confidence: (R-L)/(R+L) for each onset (-1=left, 0=center, +1=right)
+    """
+    onset_times: List[float]
+    left_strengths: List[float]
+    right_strengths: List[float]
+    pan_confidence: List[float]
+
+
+class OnsetFeatures(TypedDict):
+    """Feature vector for a single onset used in clustering.
+    
+    Combines spatial (pan), spectral, pitch, and temporal features to
+    characterize each onset for clustering-based instrument identification.
+    
+    Fields:
+        time: Onset time in seconds
+        pan_confidence: (R-L)/(R+L) spatial position (-1=left, 0=center, +1=right)
+        spectral_centroid: Brightness/center of mass of spectrum (Hz)
+        spectral_rolloff: Frequency below which 85% of energy lies (Hz)
+        spectral_flatness: Measure of noise-likeness (0=tonal, 1=noisy)
+        pitch: Detected fundamental frequency in Hz (None if not detected)
+        timing_delta: Time since previous onset in seconds (None for first onset)
+        primary_energy: Energy in primary frequency band (body range)
+        secondary_energy: Energy in secondary frequency band (brilliance range)
+        geomean: Geometric mean of primary and secondary energies
+        total_energy: Sum of primary and secondary energies
+        sustain_ms: Duration of onset in milliseconds (None if not calculated)
+    """
+    time: float
+    pan_confidence: float
+    spectral_centroid: float
+    spectral_rolloff: float
+    spectral_flatness: float
+    pitch: Optional[float]
+    timing_delta: Optional[float]
+    primary_energy: float
+    secondary_energy: float
+    geomean: float
+    total_energy: float
+    sustain_ms: Optional[float]
+
+
 # Contract field names for validation
 SPECTRAL_REQUIRED_FIELDS = {'time', 'strength', 'amplitude', 'primary_energy', 'secondary_energy', 'status'}
 SPECTRAL_OPTIONAL_FIELDS = {'tertiary_energy', 'body_wire_geomean', 'total_energy', 'ratio', 'sustain_ms', 'low_energy', 'energy_label_1', 'energy_label_2'}

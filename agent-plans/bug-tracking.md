@@ -11,6 +11,39 @@ Bugs are now tracked in GitHub Issues: https://github.com/EverlastEngineering/Dr
 
 ## Open Bugs (Not Yet in GitHub)
 
+### MIDI file creation error: "pop from empty list" in midiutil
+- **Status**: Fixed
+- **Priority**: High
+- **Description**: IndexError in midiutil.MidiFile.deInterleaveNotes() when writing MIDI files with energy-based detection
+- **Root Cause**: 
+  1. Energy detection creating duplicate onset times (3x duplicates at 197.242s in cymbals)
+  2. Zero-duration MIDI notes when two onsets occur at nearly identical times
+  3. midiutil's deInterleaveNotes() failing to match note_on/note_off pairs with duplicates
+- **Steps to Reproduce**: 
+  1. Run stems-to-midi on project 14 (Thunderstruck)
+  2. Energy detection produces duplicate onset times within 1ms
+  3. MIDI creation calculates duration = next_onset - current_onset = 0.0
+  4. midiutil.writeFile() crashes with "IndexError: pop from empty list"
+- **Expected Behavior**: Each detected onset creates one MIDI note with valid duration
+- **Actual Behavior**: Duplicate onsets create multiple notes at same time with 0 duration, causing MIDI library error
+- **Fixed**: 2026-01-27
+- **Solution**: Two-part fix:
+  1. **Duplicate removal** in `energy_detection_shell.py`:
+     - Round onset times to nearest millisecond
+     - Remove duplicates within 1ms threshold
+     - Prevents duplicate detections from reaching MIDI creation
+  2. **Minimum duration enforcement** in `analysis_core.prepare_midi_events_for_writing()`:
+     - Set MIN_DURATION_BEATS = 0.01 (5ms at 120 BPM)
+     - Ensures all MIDI notes have valid duration
+     - Prevents midiutil deInterleaveNotes errors
+- **Impact**: Energy-based detection now produces valid MIDI files without errors. Removed 6 duplicate events from project 14 (snare: 1, toms: 5)
+- **Files Modified**: 
+  - `stems_to_midi/energy_detection_shell.py` (deduplication)
+  - `stems_to_midi/analysis_core.py` (minimum duration)
+- **Fixed in Commit**: (pending commit)
+
+---
+
 ### CPU underutilization during MDX23C stem separation on macOS
 - **Status**: Fixed
 - **Priority**: High

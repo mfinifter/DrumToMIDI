@@ -169,10 +169,10 @@ def separate():
         wiener = data.get('wiener', None)
         
         # Validate overlap
-        if overlap < 2 or overlap > 8:
+        if overlap < 2 or overlap > 50:
             return jsonify({
                 'error': 'Invalid overlap',
-                'message': 'Overlap must be between 2 and 8'
+                'message': 'Overlap must be between 2 and 50'
             }), 400
         
         # Auto-detect device if requested

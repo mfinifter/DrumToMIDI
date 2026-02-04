@@ -30,6 +30,7 @@ from .detection_shell import (
     detect_snare_pitch,
     detect_hihat_state
 )
+from .energy_detection_shell import detect_onsets_energy_based
 
 # Import config structures
 from .config import DrumMapping
@@ -79,10 +80,26 @@ def _load_and_validate_audio(
     if audio.shape[0] > sr:
         print(f"    First second min: {audio[:sr].min():.6f}, max: {audio[:sr].max():.6f}, mean: {audio[:sr].mean():.6f}")
 
-    # Convert to mono if configured
-    if config['audio']['force_mono'] and audio.ndim == 2:
+    # Handle stereo/mono conversion based on per-stem or global settings
+    # Priority: per-stem use_stereo > global force_mono
+    stem_config = config.get(stem_type, {})
+    use_stereo = stem_config.get('use_stereo', None)
+    
+    # If per-stem setting not specified, fall back to global force_mono
+    if use_stereo is None:
+        # Legacy behavior: respect global force_mono setting
+        use_stereo = not config['audio'].get('force_mono', True)
+    
+    if not use_stereo and audio.ndim == 2:
+        # Convert to mono
         audio = ensure_mono(audio)
         print("    Converted stereo to mono")
+    elif use_stereo and audio.ndim == 2:
+        # Keep stereo for spatial analysis
+        print("    Keeping stereo for spatial analysis")
+    elif use_stereo and audio.ndim == 1:
+        # Mono file but stereo requested - just keep mono
+        print("    Audio is mono (no stereo info available)")
 
     # Check if audio is essentially silent
     max_amplitude = np.max(np.abs(audio))
@@ -228,10 +245,12 @@ def _detect_cymbal_pitches(
     audio: np.ndarray,
     sr: int,
     onset_times: np.ndarray,
-    config: Dict
+    config: Dict,
+    pan_positions: Optional[List[float]] = None,
+    spectral_data: Optional[List[Dict]] = None
 ) -> Optional[np.ndarray]:
     """
-    Detect and classify cymbal pitches.
+    Detect and classify cymbal pitches, optionally using pan position.
     
     Helper function for process_stem_to_midi (imperative shell).
     
@@ -240,6 +259,8 @@ def _detect_cymbal_pitches(
         sr: Sample rate
         onset_times: Times of detected onsets
         config: Configuration dictionary
+        pan_positions: Optional pan positions for each onset (-1 to +1)
+        spectral_data: Optional spectral analysis data for each onset
     
     Returns:
         Array of cymbal classifications (0=crash, 1=ride, 2=chinese) or None
@@ -280,7 +301,28 @@ def _detect_cymbal_pitches(
         print("    Warning: No valid pitches detected, all cymbals will use default (crash) note")
     
     # Classify into crash/ride/chinese
-    cymbal_classifications = classify_cymbal_pitch(detected_pitches)
+    # TODO: Replace with clustering-based classification (Phase 6)
+    # Current implementation uses hard-coded pan thresholds (-0.25/+0.25)
+    # which don't adapt to recording characteristics.
+    # Use pan-aware classification if pan positions available
+    if pan_positions is not None and len(pan_positions) == len(onset_times):
+        from .analysis_core import classify_cymbal_by_pan
+        
+        print(f"    Using pan-aware classification...")
+        cymbal_classifications = []
+        for i, (pitch, pan) in enumerate(zip(detected_pitches, pan_positions)):
+            # Get spectral features for this onset if available
+            spectral_features = spectral_data[i] if spectral_data and i < len(spectral_data) else None
+            
+            # Classify using pan + pitch + spectral
+            classification = classify_cymbal_by_pan(pan, pitch, spectral_features)
+            cymbal_classifications.append(classification)
+        
+        cymbal_classifications = np.array(cymbal_classifications)
+    else:
+        # Fall back to pitch-only classification
+        print(f"    Using pitch-only classification (no pan data)...")
+        cymbal_classifications = classify_cymbal_pitch(detected_pitches)
     
     # Show classification summary
     crash_count = np.sum(cymbal_classifications == 0)
@@ -290,11 +332,19 @@ def _detect_cymbal_pitches(
     
     # Show detailed pitch table (if not too many)
     if len(onset_times) <= 20:
-        print(f"\n      {'Time':>8s} {'Pitch(Hz)':>10s} {'Cymbal':>8s}")
-        for i, (time, pitch, classification) in enumerate(zip(onset_times, detected_pitches, cymbal_classifications)):
-            cymbal_name = ['Crash', 'Ride', 'Chinese'][classification]
-            pitch_str = f"{pitch:.1f}" if pitch > 0 else "N/A"
-            print(f"      {time:8.3f} {pitch_str:>10s} {cymbal_name:>8s}")
+        if pan_positions:
+            print(f"\n      {'Time':>8s} {'Pitch(Hz)':>10s} {'Pan':>6s} {'Cymbal':>8s}")
+            for i, (time, pitch, pan, classification) in enumerate(zip(onset_times, detected_pitches, pan_positions, cymbal_classifications)):
+                cymbal_name = ['Crash', 'Ride', 'Chinese'][classification]
+                pitch_str = f"{pitch:.1f}" if pitch > 0 else "N/A"
+                pan_str = f"{pan:+.2f}"
+                print(f"      {time:8.3f} {pitch_str:>10s} {pan_str:>6s} {cymbal_name:>8s}")
+        else:
+            print(f"\n      {'Time':>8s} {'Pitch(Hz)':>10s} {'Cymbal':>8s}")
+            for i, (time, pitch, classification) in enumerate(zip(onset_times, detected_pitches, cymbal_classifications)):
+                cymbal_name = ['Crash', 'Ride', 'Chinese'][classification]
+                pitch_str = f"{pitch:.1f}" if pitch > 0 else "N/A"
+                print(f"      {time:8.3f} {pitch_str:>10s} {cymbal_name:>8s}")
     
     return cymbal_classifications
 
@@ -579,6 +629,18 @@ def process_stem_to_midi(
     if audio is None:
         return {'events': [], 'all_onset_data': [], 'spectral_config': None}
     
+    # Track if we're processing stereo (for pan metadata later)
+    is_stereo = audio.ndim == 2
+    stereo_audio = audio if is_stereo else None  # Keep reference to stereo data
+    
+    # If stereo, create mono version for onset detection (average channels)
+    # Onset detection works better on mono, but we'll add pan info after
+    if is_stereo:
+        from .analysis_core import ensure_mono
+        audio_mono = ensure_mono(audio)
+    else:
+        audio_mono = audio
+    
     # Step 2: Configure and detect onsets
     onset_params = _configure_onset_detection(config, stem_type)
     learning_mode = onset_params['learning_mode']
@@ -595,14 +657,75 @@ def process_stem_to_midi(
     # hop_length always comes from global config (not per-stem)
     onset_params['hop_length'] = hop_length
 
-    onset_times, onset_strengths = detect_onsets(
-        audio,
-        sr,
-        hop_length=onset_params['hop_length'],
-        threshold=onset_params['threshold'],
-        delta=onset_params['delta'],
-        wait=onset_params['wait']
-    )
+    # Determine which detection method to use
+    # DEFAULT: New energy-based detection (stereo-aware, scipy peaks, backtracked)
+    # FALLBACK: Old librosa detection (use_librosa_detection: true per-stem)
+    use_librosa = config.get(stem_type, {}).get('use_librosa_detection', False)
+    
+    if use_librosa:
+        # OLD METHOD: Librosa onset detection (fallback option)
+        print(f"    Using librosa onset detection (legacy mode)")
+        onset_times, onset_strengths = detect_onsets(
+            audio_mono,  # Use mono for onset detection
+            sr,
+            hop_length=onset_params['hop_length'],
+            threshold=onset_params['threshold'],
+            delta=onset_params['delta'],
+            wait=onset_params['wait']
+        )
+        
+        # Calculate pan position for each onset if stereo (post-hoc)
+        pan_positions = None
+        pan_classifications = None
+        if is_stereo and len(onset_times) > 0:
+            from .stereo_core import calculate_pan_position, classify_onset_by_pan
+            
+            print(f"    Calculating pan positions for {len(onset_times)} onsets...")
+            pan_positions = []
+            pan_classifications = []
+            
+            for onset_time in onset_times:
+                onset_sample = int(onset_time * sr)
+                pan = calculate_pan_position(stereo_audio, onset_sample, sr, window_ms=10.0)
+                pan_class = classify_onset_by_pan(pan, center_threshold=0.15)
+                pan_positions.append(pan)
+                pan_classifications.append(pan_class)
+            
+            # Summary of pan distribution
+            left_count = pan_classifications.count('left')
+            center_count = pan_classifications.count('center')
+            right_count = pan_classifications.count('right')
+            print(f"    Pan distribution: {left_count} left, {center_count} center, {right_count} right")
+    else:
+        # NEW METHOD (DEFAULT): Energy-based detection with scipy peaks + backtracking
+        print(f"    Using energy-based detection (scipy peaks, stereo-aware, backtracked)")
+        
+        # Get per-stem calibration parameters (with sensible defaults)
+        threshold_db = config.get(stem_type, {}).get('threshold_db', 15.0)
+        min_peak_spacing_ms = config.get(stem_type, {}).get('min_peak_spacing_ms', 100.0)
+        min_absolute_energy = config.get(stem_type, {}).get('min_absolute_energy', 0.01)
+        merge_window_ms = config.get(stem_type, {}).get('merge_window_ms', 150.0)
+        
+        onset_times, onset_strengths, extra_data = detect_onsets_energy_based(
+            audio if is_stereo else audio_mono,  # Pass stereo if available
+            sr,
+            threshold_db=threshold_db,
+            min_peak_spacing_ms=min_peak_spacing_ms,
+            min_absolute_energy=min_absolute_energy,
+            merge_window_ms=merge_window_ms,
+            hop_length=onset_params['hop_length'],
+        )
+        
+        # Pan information already calculated in detection
+        pan_positions = extra_data.get('pan_positions')
+        pan_classifications = extra_data.get('pan_classifications')
+        
+        # Summary of pan distribution
+        if pan_classifications:
+            left_count = pan_classifications.count('left')
+            center_count = pan_classifications.count('center')
+            right_count = pan_classifications.count('right')
+            print(f"    Pan distribution: {left_count} left, {center_count} center, {right_count} right")
 
     # Debug: Print all raw detected onset times before filtering
     print(f"    Raw detected onset times (s): {onset_times}")
@@ -624,7 +747,7 @@ def process_stem_to_midi(
     
     # Step 3: Calculate peak amplitudes for all onsets
     peak_amplitudes = np.array([
-        calculate_peak_amplitude(audio, int(onset_time * sr), sr, window_ms=10.0)
+        calculate_peak_amplitude(audio_mono, int(onset_time * sr), sr, window_ms=10.0)
         for onset_time in onset_times
     ])
     
@@ -649,7 +772,7 @@ def process_stem_to_midi(
             onset_times,
             onset_strengths,
             peak_amplitudes,
-            audio,
+            audio_mono,  # Use mono for spectral analysis
             sr,
             stem_type,
             config,
@@ -846,7 +969,7 @@ def process_stem_to_midi(
         hihat_config = config.get('hihat', {})
         open_sustain_threshold = hihat_config.get('open_sustain_ms', 150)
         hihat_states = detect_hihat_state(
-            audio, sr, onset_times,
+            audio_mono, sr, onset_times,
             sustain_durations=hihat_sustain_durations,
             open_sustain_threshold_ms=open_sustain_threshold,
             spectral_data=hihat_spectral_data,
@@ -868,17 +991,21 @@ def process_stem_to_midi(
     # Step 8: Detect and classify tom pitches (if applicable)
     tom_classifications = None
     if stem_type == 'toms':
-        tom_classifications = _detect_tom_pitches(audio, sr, onset_times, config)
+        tom_classifications = _detect_tom_pitches(audio_mono, sr, onset_times, config)
     
     # Step 8b: Detect and classify cymbal pitches (if applicable)
     cymbal_classifications = None
     if stem_type == 'cymbals':
-        cymbal_classifications = _detect_cymbal_pitches(audio, sr, onset_times, config)
+        cymbal_classifications = _detect_cymbal_pitches(
+            audio_mono, sr, onset_times, config,
+            pan_positions=pan_positions,
+            spectral_data=filtered_onset_data if 'filtered_onset_data' in locals() else None
+        )
     
     # Step 8c: Detect and classify snare pitches (if applicable)
     snare_classifications = None
     if stem_type == 'snare':
-        snare_classifications = _detect_snare_pitches(audio, sr, onset_times, config)
+        snare_classifications = _detect_snare_pitches(audio_mono, sr, onset_times, config)
     
     # Step 9: Create MIDI events
     # Pass sustain durations for cymbals (note duration) and hihats (foot-close timing)
