@@ -29,6 +29,47 @@ import librosa
 from scipy.signal import find_peaks
 
 
+def snap_to_amplitude_peak(
+    audio: np.ndarray,
+    onset_sample: int,
+    peak_sample: int,
+    search_window_ms: float = 50.0,
+    sr: int = 44100
+) -> int:
+    """
+    Snap detection to actual amplitude peak for percussive instruments.
+    
+    Energy-based detection finds the energy envelope peak, but for drums
+    we want the actual stick impact (maximum raw amplitude). This searches
+    a window around the detected onset for the true amplitude peak.
+    
+    Args:
+        audio: Raw audio signal
+        onset_sample: Backtracked onset position (attack start from energy)
+        peak_sample: Energy envelope peak position
+        search_window_ms: Search window in milliseconds (±50ms default)
+        sr: Sample rate
+    
+    Returns:
+        Sample index of maximum amplitude peak
+    """
+    search_samples = int(search_window_ms * sr / 1000.0)
+    
+    # Search window: from onset to peak_sample + buffer
+    # This captures the attack transient where the stick hits
+    search_start = max(0, onset_sample)
+    search_end = min(len(audio), peak_sample + search_samples)
+    
+    if search_start >= search_end:
+        return onset_sample
+    
+    # Find maximum absolute amplitude in window
+    window = audio[search_start:search_end]
+    max_idx = np.argmax(np.abs(window))
+    
+    return search_start + max_idx
+
+
 def calculate_energy_envelope(
     audio: np.ndarray,
     sr: int,
@@ -89,6 +130,8 @@ def detect_transient_peaks(
     min_absolute_energy: float = 0.001,
     pre_max: int = 3,
     post_max: int = 3,
+    audio: Optional[np.ndarray] = None,
+    sr: int = 44100,
 ) -> List[dict]:
     """
     Detect transient peaks - sharp attack moments visible in DAW.
@@ -99,10 +142,13 @@ def detect_transient_peaks(
     - No blind wait periods - every peak evaluated independently
     - Prominence-based: peaks must stand out above LOCAL baseline
     - BACKTRACKING: Finds attack start, not peak (crash cymbal takes ~120ms to peak)
+    - PEAK SNAPPING: Snaps to actual amplitude peak for percussive precision
     - Result: Detects obvious events like 112s/119s cymbals that librosa missed
     
     Uses scipy.signal.find_peaks for robust peak detection, then backtracks
     from peak to find actual onset (attack start) using left_bases and threshold.
+    For percussive instruments, snaps to the actual amplitude peak within the
+    transient window for precise timing alignment with visual waveform peaks.
     
     Args:
         times: Time in seconds for each energy frame
@@ -112,9 +158,11 @@ def detect_transient_peaks(
         min_absolute_energy: Absolute minimum energy to consider (noise floor = 0.01)
         pre_max: Unused (kept for API compatibility)
         post_max: Unused (kept for API compatibility)
+        audio: Optional raw audio signal for amplitude peak snapping
+        sr: Sample rate (for peak snapping)
     
     Returns:
-        List of peak dicts with onset_time (backtracked), peak_energy, peak_time
+        List of peak dicts with onset_time (snapped to amplitude peak), peak_energy, peak_time
     """
     if len(times) == 0 or len(energy) == 0:
         return []
@@ -169,10 +217,27 @@ def detect_transient_peaks(
                 onset_idx = j + 1  # Onset is just after it crosses threshold
                 break
         
+        # PEAK SNAPPING: For percussive instruments, snap to actual amplitude peak
+        # Energy envelope peak != raw amplitude peak (RMS smoothing causes offset)
+        # This aligns MIDI events with visual waveform peaks for accurate timing
+        final_onset_time = times[onset_idx]
+        if audio is not None:
+            # Calculate sample indices (energy frames -> audio samples)
+            hop_length = int((times[1] - times[0]) * sr) if len(times) > 1 else 512
+            onset_sample = int(onset_idx * hop_length)
+            peak_sample = int(peak_idx * hop_length)
+            
+            # Snap to maximum amplitude within transient window
+            snapped_sample = snap_to_amplitude_peak(
+                audio, onset_sample, peak_sample, 
+                search_window_ms=50.0, sr=sr
+            )
+            final_onset_time = float(snapped_sample / sr)
+        
         peaks.append({
-            'onset_time': float(times[onset_idx]),  # Use backtracked onset, not peak
+            'onset_time': final_onset_time,  # Snapped to amplitude peak if audio provided
             'peak_energy': float(peak_energy),
-            'peak_time': float(times[peak_idx]),  # Keep peak time for reference
+            'peak_time': float(times[peak_idx]),  # Keep energy peak time for reference
         })
     
     return peaks
@@ -368,13 +433,14 @@ def detect_stereo_transient_peaks(
     )
     
     # Detect transient peaks in each channel
+    # Pass raw audio for amplitude peak snapping (percussive precision)
     left_peaks = detect_transient_peaks(
         left_times, left_energy, threshold_db, min_peak_spacing_ms,
-        min_absolute_energy
+        min_absolute_energy, audio=left_channel, sr=sr
     )
     right_peaks = detect_transient_peaks(
         right_times, right_energy, threshold_db, min_peak_spacing_ms,
-        min_absolute_energy
+        min_absolute_energy, audio=right_channel, sr=sr
     )
     
     # Merge L/R peaks within merge window
