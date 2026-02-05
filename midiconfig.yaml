@@ -181,6 +181,8 @@ toms:
   min_peak_spacing_ms: 90.0       # Medium spacing for tom fills
   min_absolute_energy: 0.015      # Medium noise floor
   merge_window_ms: 150.0          # L/R merge window
+  energy_method: 'peak_hold'      # Envelope calculation method: 'rms', 'spectral', or 'peak_hold' (DAW-style)
+  peak_hold_ms: 3.0               # Peak-hold smoothing window (2-5ms typical, DAW waveform display)
   
   # Onset detection (LEGACY - only used if use_librosa_detection: true)
   onset_threshold: null      # Use global setting (0.01) - toms are loud and transient
@@ -234,6 +236,8 @@ hihat:
   min_peak_spacing_ms: 60.0       # Hi-hats can be VERY fast (16th notes)
   min_absolute_energy: 0.008      # Lower noise floor (hi-hats are quieter than cymbals)
   merge_window_ms: 150.0          # L/R merge window
+  energy_method: 'peak_hold'      # Envelope calculation method: 'rms', 'spectral', or 'peak_hold' (DAW-style)
+  peak_hold_ms: 3.0               # Peak-hold smoothing window (2-5ms typical, DAW waveform display)
   
   # Onset detection (LEGACY - only used if use_librosa_detection: true)
   # Hi-hats can have very fast repeated hits, similar to cymbals but shorter sustain

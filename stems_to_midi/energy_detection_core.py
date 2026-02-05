@@ -27,6 +27,7 @@ import numpy as np
 from typing import List, Tuple, Optional
 import librosa
 from scipy.signal import find_peaks
+from scipy.ndimage import maximum_filter1d
 
 
 def snap_to_amplitude_peak(
@@ -75,7 +76,8 @@ def calculate_energy_envelope(
     sr: int,
     frame_length: int = 2048,
     hop_length: int = 512,
-    method: str = 'rms'
+    method: str = 'rms',
+    peak_hold_ms: float = 3.0
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Calculate energy envelope - similar to DAW waveform visualization.
@@ -88,7 +90,8 @@ def calculate_energy_envelope(
         sr: Sample rate
         frame_length: Window size for energy calculation
         hop_length: Hop size between frames
-        method: 'rms' (root mean square) or 'spectral' (spectral flux)
+        method: 'rms' (root mean square), 'spectral' (spectral flux), or 'peak_hold' (DAW-like)
+        peak_hold_ms: For peak_hold method - smoothing window in milliseconds (2-5ms)
     
     Returns:
         Tuple of (times, energy_values)
@@ -96,12 +99,36 @@ def calculate_energy_envelope(
         - energy_values: Energy at each frame
     """
     if method == 'rms':
-        # RMS energy - what you see in DAW waveform
+        # RMS energy - smoothed envelope (50-100ms smoothing)
         energy = librosa.feature.rms(
             y=audio,
             frame_length=frame_length,
             hop_length=hop_length
         )[0]
+    elif method == 'peak_hold':
+        # Peak-hold envelope - mimics DAW waveform display
+        # Uses maximum_filter1d like visual peak meters
+        # Much better time resolution (2-5ms) than RMS (50-100ms)
+        
+        # Calculate absolute amplitude
+        abs_audio = np.abs(audio)
+        
+        # Apply peak-hold filter (like DAW waveform display)
+        # This preserves transients while smoothing sample noise
+        smooth_samples = max(1, int(peak_hold_ms * sr / 1000.0))
+        envelope = maximum_filter1d(abs_audio, size=smooth_samples)
+        
+        # Downsample to frames (matching RMS frame rate for consistency)
+        num_frames = int(np.ceil(len(envelope) / hop_length))
+        energy = np.zeros(num_frames)
+        
+        for i in range(num_frames):
+            start = i * hop_length
+            end = min(start + hop_length, len(envelope))
+            if start < end:
+                # Use maximum value in each frame (peak hold)
+                energy[i] = np.max(envelope[start:end])
+    
     elif method == 'spectral':
         # Spectral flux - better for detecting timbral changes
         energy = librosa.onset.onset_strength(
@@ -132,6 +159,7 @@ def detect_transient_peaks(
     post_max: int = 3,
     audio: Optional[np.ndarray] = None,
     sr: int = 44100,
+    method: str = 'rms',
 ) -> List[dict]:
     """
     Detect transient peaks - sharp attack moments visible in DAW.
@@ -160,6 +188,7 @@ def detect_transient_peaks(
         post_max: Unused (kept for API compatibility)
         audio: Optional raw audio signal for amplitude peak snapping
         sr: Sample rate (for peak snapping)
+        method: 'rms', 'spectral', or 'peak_hold' (skips snapping for peak_hold)
     
     Returns:
         List of peak dicts with onset_time (snapped to amplitude peak), peak_energy, peak_time
@@ -220,8 +249,9 @@ def detect_transient_peaks(
         # PEAK SNAPPING: For percussive instruments, snap to actual amplitude peak
         # Energy envelope peak != raw amplitude peak (RMS smoothing causes offset)
         # This aligns MIDI events with visual waveform peaks for accurate timing
+        # SKIP for peak_hold: envelope already IS the amplitude, snapping is redundant
         final_onset_time = times[onset_idx]
-        if audio is not None:
+        if audio is not None and method != 'peak_hold':
             # Calculate sample indices (energy frames -> audio samples)
             hop_length = int((times[1] - times[0]) * sr) if len(times) > 1 else 512
             onset_sample = int(onset_idx * hop_length)
@@ -390,6 +420,7 @@ def detect_stereo_transient_peaks(
     hop_length: int = 512,
     method: str = 'rms',
     min_absolute_energy: float = 0.001,
+    peak_hold_ms: float = 3.0,
 ) -> dict:
     """
     Detect transient peaks in stereo audio - simple and reliable.
@@ -406,8 +437,9 @@ def detect_stereo_transient_peaks(
         merge_window_ms: Merge L/R peaks within this window into one event
         frame_length: Frame length for energy calculation
         hop_length: Hop length for energy calculation
-        method: 'rms' or 'spectral'
+        method: 'rms', 'spectral', or 'peak_hold' (DAW-like waveform display)
         min_absolute_energy: Noise floor threshold
+        peak_hold_ms: For peak_hold method - smoothing window (2-5ms)
     
     Returns:
         Dict with onset_times, left_energies, right_energies, pan_confidence
@@ -426,21 +458,22 @@ def detect_stereo_transient_peaks(
     
     # Calculate energy envelopes
     left_times, left_energy = calculate_energy_envelope(
-        left_channel, sr, frame_length, hop_length, method
+        left_channel, sr, frame_length, hop_length, method, peak_hold_ms
     )
     right_times, right_energy = calculate_energy_envelope(
-        right_channel, sr, frame_length, hop_length, method
+        right_channel, sr, frame_length, hop_length, method, peak_hold_ms
     )
     
     # Detect transient peaks in each channel
     # Pass raw audio for amplitude peak snapping (percussive precision)
+    # Skip snapping for peak_hold method (envelope already is amplitude)
     left_peaks = detect_transient_peaks(
         left_times, left_energy, threshold_db, min_peak_spacing_ms,
-        min_absolute_energy, audio=left_channel, sr=sr
+        min_absolute_energy, audio=left_channel, sr=sr, method=method
     )
     right_peaks = detect_transient_peaks(
         right_times, right_energy, threshold_db, min_peak_spacing_ms,
-        min_absolute_energy, audio=right_channel, sr=sr
+        min_absolute_energy, audio=right_channel, sr=sr, method=method
     )
     
     # Merge L/R peaks within merge window

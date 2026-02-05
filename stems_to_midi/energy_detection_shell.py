@@ -21,6 +21,7 @@ def detect_onsets_energy_based(
     frame_length: int = 2048,
     hop_length: int = 512,
     method: str = 'rms',
+    peak_hold_ms: float = 3.0,
 ) -> Tuple[np.ndarray, np.ndarray, Dict]:
     """
     Detect onsets using energy-based transient peak detection (NEW METHOD).
@@ -43,7 +44,8 @@ def detect_onsets_energy_based(
         min_absolute_energy: Noise floor threshold
         frame_length: Frame length for energy calculation
         hop_length: Hop length for energy calculation
-        method: 'rms' or 'spectral'
+        method: 'rms', 'spectral', or 'peak_hold' (DAW-like waveform display)
+        peak_hold_ms: For peak_hold method - smoothing window (2-5ms)
     
     Returns:
         Tuple of:
@@ -72,6 +74,7 @@ def detect_onsets_energy_based(
         hop_length=hop_length,
         method=method,
         min_absolute_energy=min_absolute_energy,
+        peak_hold_ms=peak_hold_ms,
     )
     
     # Convert to format expected by processing_shell

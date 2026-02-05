@@ -27,6 +27,8 @@ def export_energy_detection_csv(
     audio_path: str,
     output_csv: str,
     threshold_db: float = 15.0,
+    method: str = 'rms',
+    peak_hold_ms: float = 3.0,
 ):
     """Export onset data using energy-based detection with L/R features."""
     
@@ -39,13 +41,14 @@ def export_energy_detection_csv(
     elif audio.shape[0] != 2:
         audio = audio[:2]
     
-    print(f"Detecting transient peaks (threshold_db={threshold_db})...")
+    print(f"Detecting transient peaks (threshold_db={threshold_db}, method={method})...")
     onset_data = detect_stereo_transient_peaks(
         audio, sr,
         threshold_db=threshold_db,
         min_peak_spacing_ms=100.0,
         merge_window_ms=150.0,
-        method='rms',
+        method=method,
+        peak_hold_ms=peak_hold_ms,
         min_absolute_energy=0.01,  # Raised to filter noise - real cymbal hits are louder
     )
     
@@ -177,6 +180,10 @@ if __name__ == '__main__':
                         help='Output CSV file')
     parser.add_argument('--threshold-db', type=float, default=15.0,
                         help='dB prominence threshold (12-18 recommended, higher = fewer/cleaner detections)')
+    parser.add_argument('--method', default='rms', choices=['rms', 'spectral', 'peak_hold'],
+                        help='Envelope calculation method (rms=default, peak_hold=DAW-style)')
+    parser.add_argument('--peak-hold-ms', type=float, default=3.0,
+                        help='Peak-hold smoothing window in milliseconds (used with --method peak_hold)')
     
     args = parser.parse_args()
     
@@ -184,4 +191,6 @@ if __name__ == '__main__':
         audio_path=args.audio,
         output_csv=args.output,
         threshold_db=args.threshold_db,
+        method=args.method,
+        peak_hold_ms=args.peak_hold_ms,
     )

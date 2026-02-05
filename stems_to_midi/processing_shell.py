@@ -737,6 +737,8 @@ def process_stem_to_midi(
         min_peak_spacing_ms = config.get(stem_type, {}).get('min_peak_spacing_ms', 100.0)
         min_absolute_energy = config.get(stem_type, {}).get('min_absolute_energy', 0.01)
         merge_window_ms = config.get(stem_type, {}).get('merge_window_ms', 150.0)
+        energy_method = config.get(stem_type, {}).get('energy_method', 'rms')
+        peak_hold_ms = config.get(stem_type, {}).get('peak_hold_ms', 3.0)
         
         onset_times, onset_strengths, extra_data = detect_onsets_energy_based(
             audio if is_stereo else audio_mono,  # Pass stereo if available
@@ -746,6 +748,8 @@ def process_stem_to_midi(
             min_absolute_energy=min_absolute_energy,
             merge_window_ms=merge_window_ms,
             hop_length=onset_params['hop_length'],
+            method=energy_method,
+            peak_hold_ms=peak_hold_ms,
         )
         
         # Pan information already calculated in detection
