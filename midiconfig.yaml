@@ -44,9 +44,20 @@ energy_detection:
   merge_window_ms: 150.0        # energy: L/R merge window for stereo
   use_stereo: true              # energy: detect in stereo and calculate pan
   onset_merge_window_ms: 100    # energy: merge nearby onsets within this window
+  energy_method: 'rms'          # energy: envelope method ('rms', 'spectral', 'peak_hold')
+  peak_hold_ms: 3.0             # energy: peak-hold smoothing window (2-5ms typical, DAW waveform)
+
+# === SPECTRAL FILTERING ===
+filtering:
+  geomean_threshold: null  # per-stem: minimum spectral energy (geometric mean)
+  min_strength_threshold: null  # per-stem: minimum onset strength
+  min_sustain_ms: null  # per-stem: minimum sustain duration
+  expected_clusters: null  # per-stem: expected number of sound types
+  enable_spectral_filter: true  # per-stem: enable/disable spectral filtering
+  reverb_continuation_attack_threshold: 0.2  # attack_sharpness threshold: real hits >= 0.2, reverb tails < 0.2
 
 # === PER-STEM OVERRIDES ===
-# Energy-based params: threshold_db, min_peak_spacing_ms, min_absolute_energy, merge_window_ms
+# Energy-based params: threshold_db, min_peak_spacing_ms, min_absolute_energy, merge_window_ms, energy_method, peak_hold_ms
 # Librosa params: onset_threshold, onset_delta, onset_wait, use_librosa_detection: true
 
 kick:
