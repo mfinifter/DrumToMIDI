@@ -11,6 +11,36 @@ Bugs are now tracked in GitHub Issues: https://github.com/EverlastEngineering/Dr
 
 ## Open Bugs (Not Yet in GitHub)
 
+### Missing pan_confidence data in analysis JSON output
+- **Status**: Open
+- **Priority**: Medium
+- **Description**: Pan position data is calculated during energy-based detection but not saved to the analysis.json sidecar file
+- **Details**: 
+  - `energy_detection_core.py` calculates `pan_confidence` for each onset (R-L)/(R+L) ranging from -1.0 (left) to +1.0 (right)
+  - `analysis_core.py::extract_onset_features()` includes pan_confidence in feature extraction
+  - `midi.py::save_analysis_sidecar()` does NOT include pan_confidence in saved JSON fields
+- **Expected Behavior**: Pan position data should be available in analysis JSON for visualization and analysis
+- **Actual Behavior**: Pan data is calculated but discarded during JSON serialization
+- **Impact**: Cannot visualize or analyze stereo positioning of detected hits
+- **Suggested Fix**: Add 'pan_confidence' to the field list in `save_analysis_sidecar()` (line ~240-245)
+
+### Missing pitch data in analysis JSON output  
+- **Status**: Open
+- **Priority**: Medium
+- **Description**: Pitch detection work was implemented but pitch_hz is not populated in analysis JSON output
+- **Details**:
+  - `detection_shell.py` has `detect_tom_pitch()` and `detect_cymbal_pitch()` functions using librosa pYIN
+  - Config has 'pitch' listed as a secondary feature for clustering
+  - `midi.py::save_analysis_sidecar()` includes 'pitch_hz' in the field list (line 242)
+  - However, pitch detection functions are not called during normal processing
+- **Expected Behavior**: Pitch should be detected for toms and cymbals and saved to JSON
+- **Actual Behavior**: pitch_hz field exists but remains null/undefined in JSON output
+- **Impact**: Cannot distinguish tom pitches (high/mid/low) or analyze cymbal characteristics
+- **Investigation Needed**: 
+  - Where should pitch detection be called in the processing pipeline?
+  - Should it be per-onset or per-stem?
+  - Performance impact of adding pitch detection?
+
 ### MIDI file creation error: "pop from empty list" in midiutil
 - **Status**: Fixed
 - **Priority**: High

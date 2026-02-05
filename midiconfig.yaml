@@ -1,48 +1,53 @@
 # MIDI Conversion Configuration
 # Settings for converting drum stems to MIDI notes
 
-# Audio Processing
+# === AUDIO PROCESSING ===
 audio:
-  force_mono: true     # Convert stereo files to mono before analysis (recommended)
-                       # Uses average of left/right channels
-  silence_threshold: 0.001   # Amplitude threshold for silence detection (-60dB)
-  min_segment_length: 512    # Minimum audio segment length for analysis (samples)
+  # Legacy mono conversion (DEPRECATED - use per-stem use_stereo instead)
+  force_mono: true  # Convert stereo to mono (overridden by per-stem use_stereo settings)
   
-  # Amplitude normalization (NEW - helps with quiet recordings)
-  normalize_amplitude: false  # Normalize audio amplitude before spectral analysis (global default)
-  target_amplitude: 0.8       # Target peak amplitude for normalization (0-1 range)
+  # Silence detection
+  silence_threshold: 0.001  # Amplitude below which audio is considered silent (-60dB)
+  min_segment_length: 512  # Minimum audio segment length for analysis (samples)
   
-  # Peak amplitude detection
-  peak_window_sec: 0.10      # Window size for peak detection (seconds)
+  # Amplitude normalization (helps with quiet/loud recordings)
+  normalize_amplitude: false  # Scale audio to target amplitude before detection
+  target_amplitude: 0.8  # Target peak amplitude (0-1 range)
+  normalize_stereo_balance: false  # Equalize L/R RMS for fair stereo detection
   
-  # Sustain detection (envelope analysis)
-  sustain_window_sec: 0.2    # Window size for sustain analysis (seconds)
-  envelope_threshold: 0.1    # Threshold for sustain detection (fraction of peak)
-  envelope_smooth_kernel: 51 # Median filter kernel size for envelope smoothing (must be odd)
+  # Peak amplitude measurement (for velocity calculation)
+  peak_window_sec: 0.1  # Window size for measuring peak amplitude after onset
   
-  # MIDI timing
-  default_note_duration: 0.1     # Default duration for last note (seconds)
-  very_short_duration: 0.01      # Very short note duration (beats) for MIDI output
+  # Sustain/duration measurement (envelope analysis)
+  sustain_window_sec: 0.2  # Window size for analyzing sound decay
+  envelope_threshold: 0.1  # Threshold as fraction of peak (0.1 = 10%)
+  envelope_smooth_kernel: 51  # Median filter kernel size (must be odd)
+  
+  # MIDI timing defaults
+  default_note_duration: 0.1  # Default duration for last note (seconds)
+  very_short_duration: 0.01  # Very short note duration for MIDI output (beats)
 
-# Onset Detection Parameters (applies to all stems)
+# === LIBROSA DETECTION (OLD METHOD - use_librosa_detection: true per-stem) ===
 onset_detection:
-  threshold: 0.3       # Onset strength threshold (0-1). Lower = more sensitive, catches quieter hits
-  delta: 0.01           # Peak picking sensitivity. Lower = more sensitive
-  wait: 3              # Minimum frames between peaks. 1 = ~11ms, allows fast repeated hits
-  hop_length: 512      # Samples between frames. Affects time resolution
-
-# Energy-Based Detection (NEW DEFAULT METHOD - scipy peaks)
-# Uses RMS energy envelope with peak detection instead of librosa spectral flux
-# Benefits: stereo-aware, backtracked timing, no blind wait periods
-# Set use_librosa_detection: true per-stem to fall back to old method
+  threshold: 0.3       # librosa: onset strength threshold (0-1)
+  delta: 0.01          # librosa: peak picking sensitivity
+  wait: 3              # librosa: minimum frames between peaks
+  hop_length: 512      # BOTH: samples between frames (affects time resolution)
+  # Per-stem overrides: onset_threshold, onset_delta, onset_wait
+  
+# === ENERGY-BASED DETECTION (NEW METHOD - DEFAULT) ===
 energy_detection:
-  threshold_db: 15.0              # Default prominence threshold (dB above local minimum)
-  min_peak_spacing_ms: 100.0      # Default minimum spacing between peaks
-  min_absolute_energy: 0.01       # Default noise floor threshold
-  merge_window_ms: 150.0          # Default L/R merge window for stereo
+  use_librosa_detection: false  # false = energy-based (default), true = librosa
+  threshold_db: 15.0            # energy: prominence threshold (dB above local minimum)
+  min_peak_spacing_ms: 100.0    # energy: minimum spacing between peaks
+  min_absolute_energy: 0.01     # energy: noise floor threshold
+  merge_window_ms: 150.0        # energy: L/R merge window for stereo
+  use_stereo: true              # energy: detect in stereo and calculate pan
+  onset_merge_window_ms: 100    # energy: merge nearby onsets within this window
 
-# Per-Stem Filtering Settings
-# Each stem can have custom spectral filtering to reject artifacts and bleed
+# === PER-STEM OVERRIDES ===
+# Energy-based params: threshold_db, min_peak_spacing_ms, min_absolute_energy, merge_window_ms
+# Librosa params: onset_threshold, onset_delta, onset_wait, use_librosa_detection: true
 
 kick:
   # Kick drum (bass drum) settings
