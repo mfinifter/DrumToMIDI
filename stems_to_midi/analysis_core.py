@@ -252,7 +252,8 @@ def calculate_attack_sharpness(
         attack_portion: Fraction of duration to analyze (default 30%)
         
     Returns:
-        Attack sharpness (max derivative of envelope)
+        Attack sharpness in amplitude units per millisecond.
+        Typical values: Sharp drums ~0.3-0.5, reverb tails ~0.05-0.1
     """
     onset_sample = int(onset_time * sr)
     attack_samples = int(duration * attack_portion * sr)
@@ -276,11 +277,14 @@ def calculate_attack_sharpness(
     kernel = np.ones(kernel_size) / kernel_size
     envelope = np.convolve(envelope, kernel, mode='same')
     
-    # Calculate derivative
+    # Calculate derivative (per sample)
     derivative = np.diff(envelope)
     
-    # Return max derivative (steepest rise)
-    return float(np.max(derivative)) if len(derivative) > 0 else 0.0
+    # Scale to per-millisecond for interpretability
+    max_derivative_per_sample = float(np.max(derivative)) if len(derivative) > 0 else 0.0
+    samples_per_ms = sr / 1000.0
+    
+    return max_derivative_per_sample * samples_per_ms
 
 
 def calculate_envelope_continuity(
