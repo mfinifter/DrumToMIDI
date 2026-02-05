@@ -1327,11 +1327,12 @@ def mark_reverb_continuations(
     Mark reverb continuation events in onset data.
     
     Reverb continuations are artifacts where peak-hold detection splits
-    a single decay envelope into multiple events. Characteristics:
+    a single reverb/echo envelope into multiple events. Characteristics:
     - Next event starts exactly when previous ends (within time_margin_ms)
     - Amplitude continuity: start matches previous end (within amplitude_margin)
-    - Amplitude decreases (decay pattern)
-    - Low attack sharpness (< 0.2): reverb tails have smooth envelopes, not sharp attacks
+    - Low attack sharpness (< threshold): reverb/echo have smooth envelopes, not sharp attacks
+    
+    Note: Amplitude can increase or decrease with complex reverb (reflections building up).
     
     These events are marked as 'REVERB_CONTINUATION' status to preserve
     data while allowing MIDI export to filter them.
@@ -1381,24 +1382,21 @@ def mark_reverb_continuations(
         # Check continuation conditions
         is_adjacent = abs(gap) <= time_margin_sec
         
-        # Amplitude continuity
+        # Amplitude continuity - envelope connects smoothly
         prev_end_amp = prev['amplitude_at_end']
         curr_start_amp = curr['amplitude_at_start']
         amp_diff = abs(curr_start_amp - prev_end_amp)
         is_amplitude_continuous = amp_diff <= amplitude_margin
         
-        # Amplitude decay (use peak amplitude instead of velocity)
-        is_decaying = curr['amplitude'] < prev['amplitude']
-        
         # Attack sharpness check - real hits have sharp attacks (>= threshold)
-        # Reverb tails have smooth envelopes (< threshold)
+        # Reverb/echo tails have smooth envelopes (< threshold)
+        # Note: Complex reverb can have increasing amplitude (reflections building up)
         curr_attack_sharpness = curr.get('attack_sharpness')
         is_smooth_envelope = (curr_attack_sharpness is not None and 
                              curr_attack_sharpness < attack_sharpness_threshold)
         
         # Mark as reverb continuation if all conditions met
-        # Skip if attack is sharp (indicates real transient, not reverb tail)
-        if is_adjacent and is_amplitude_continuous and is_decaying and is_smooth_envelope:
+        if is_adjacent and is_amplitude_continuous and is_smooth_envelope:
             curr['status'] = 'REVERB_CONTINUATION'
     
     return onset_data_list
