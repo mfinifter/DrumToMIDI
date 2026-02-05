@@ -157,7 +157,10 @@ def detect_transient_peaks(
         
         # Backtrack further to find where energy crosses threshold
         # Look for point where energy is 10-20% of peak (catches attack start)
-        onset_threshold = peak_energy * 0.15  # 15% of peak energy
+        # Use MAX of relative (15% of peak) and absolute threshold to handle quiet hits
+        relative_threshold = peak_energy * 0.15  # 15% of peak energy
+        absolute_threshold = min_absolute_energy * 1.5  # 1.5x noise floor
+        onset_threshold = max(relative_threshold, absolute_threshold)
         onset_idx = peak_idx
         
         # Search backwards from peak to base

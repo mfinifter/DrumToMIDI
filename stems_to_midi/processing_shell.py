@@ -110,6 +110,38 @@ def _load_and_validate_audio(
         print("    Audio is silent, skipping...")
         return None, None
 
+    # Amplitude normalization (per-stem or global setting)
+    # This ensures spectral energy thresholds work consistently across quiet/loud recordings
+    normalize_amplitude = stem_config.get('normalize_amplitude', 
+                                          config.get('audio', {}).get('normalize_amplitude', False))
+    
+    if normalize_amplitude and max_amplitude > 0:
+        target_amplitude = config.get('audio', {}).get('target_amplitude', 0.8)
+        if max_amplitude < target_amplitude:  # Only normalize if too quiet
+            scale_factor = target_amplitude / max_amplitude
+            audio = audio * scale_factor
+            print(f"    Normalized amplitude: {max_amplitude:.6f} -> {target_amplitude:.2f} (scale: {scale_factor:.2f}x)")
+
+    # Stereo channel balance normalization (per-stem or global setting)
+    # This equalizes L/R channel levels for fair detection when one channel is louder
+    normalize_stereo_balance = stem_config.get('normalize_stereo_balance',
+                                               config.get('audio', {}).get('normalize_stereo_balance', False))
+    
+    if normalize_stereo_balance and audio.ndim == 2:
+        left_rms = np.sqrt(np.mean(audio[:, 0] ** 2))
+        right_rms = np.sqrt(np.mean(audio[:, 1] ** 2))
+        
+        if left_rms > 0 and right_rms > 0:
+            # Normalize each channel to equal RMS
+            target_rms = (left_rms + right_rms) / 2
+            left_scale = target_rms / left_rms
+            right_scale = target_rms / right_rms
+            
+            audio[:, 0] *= left_scale
+            audio[:, 1] *= right_scale
+            
+            print(f"    Balanced stereo channels: L×{left_scale:.2f}, R×{right_scale:.2f} (R/L was {right_rms/left_rms:.2f}x)")
+
     return audio, sr
 
 
@@ -745,7 +777,12 @@ def process_stem_to_midi(
     if len(onset_times) == 0:
         return {'events': [], 'all_onset_data': [], 'spectral_config': None}
     
-    # Step 3: Calculate peak amplitudes for all onsets
+    # Step 3: Calculate event durations (NEW)
+    from .analysis_core import calculate_event_durations
+    durations = calculate_event_durations(onset_times, audio_mono, sr)
+    print(f"    Calculated event durations: min={np.min(durations):.3f}s, max={np.max(durations):.3f}s, mean={np.mean(durations):.3f}s")
+    
+    # Step 4: Calculate peak amplitudes for all onsets
     peak_amplitudes = np.array([
         calculate_peak_amplitude(audio_mono, int(onset_time * sr), sr, window_ms=10.0)
         for onset_time in onset_times
@@ -776,7 +813,8 @@ def process_stem_to_midi(
             sr,
             stem_type,
             config,
-            learning_mode=learning_mode
+            learning_mode=learning_mode,
+            durations=durations  # NEW: Pass event durations as keyword arg
         )
 
         # Extract filtered results
@@ -794,7 +832,7 @@ def process_stem_to_midi(
         # Show ALL onset data and spectral chart if debug flags are enabled
         if show_all_onsets or show_spectral_data:
             geomean_threshold = spectral_config['geomean_threshold'] if spectral_config else None
-            energy_labels = spectral_config['energy_labels'] if spectral_config else {'primary': 'BodyE', 'secondary': 'WireE'}
+            energy_labels = spectral_config['energy_labels'] if spectral_config else {'primary': 'Primary', 'secondary': 'Secondary'}
             stem_config = config.get(stem_type, {})
 
             print("\n      ALL DETECTED ONSETS - SPECTRAL ANALYSIS:")
@@ -805,19 +843,19 @@ def process_stem_to_midi(
 
             # Configure labels based on stem type
             if stem_type == 'snare':
-                print("      Str=Onset Strength, Amp=Peak Amplitude, BodyE=Body Energy (150-400Hz), WireE=Wire Energy (2-8kHz)")
+                print("      Str=Onset Strength, Amp=Peak Amplitude, Primary=Body Energy (150-400Hz), Secondary=Wire Energy (2-8kHz)")
             elif stem_type == 'kick':
-                print("      Str=Onset Strength, Amp=Peak Amplitude, FundE=Fundamental Energy (40-80Hz), BodyE=Body Energy (80-150Hz)")
+                print("      Str=Onset Strength, Amp=Peak Amplitude, Primary=Fundamental Energy (40-80Hz), Secondary=Body Energy (80-150Hz)")
             elif stem_type == 'toms':
-                print("      Str=Onset Strength, Amp=Peak Amplitude, FundE=Fundamental Energy (60-150Hz), BodyE=Body Energy (150-400Hz)")
+                print("      Str=Onset Strength, Amp=Peak Amplitude, Primary=Fundamental Energy (60-150Hz), Secondary=Body Energy (150-400Hz)")
             elif stem_type == 'hihat':
-                print("      Str=Onset Strength, Amp=Peak Amplitude, BodyE=Body Energy (500-2kHz), SizzleE=Sizzle Energy (6-12kHz), SustainMs=Sustain Duration")
+                print("      Str=Onset Strength, Amp=Peak Amplitude, Primary=Body Energy (500-2kHz), Secondary=Sizzle Energy (6-12kHz), SustainMs=Sustain Duration")
                 min_sustain_ms = stem_config.get('min_sustain_ms', 25)
                 print(f"      Minimum sustain duration: {min_sustain_ms}ms (filters out handclap bleed)")
                 open_sustain_ms = stem_config.get('open_sustain_ms', 150)
                 print(f"      Open/Closed threshold: {open_sustain_ms}ms (>={open_sustain_ms}ms = open hihat)")
             elif stem_type == 'cymbals':
-                print("      Str=Onset Strength, Amp=Peak Amplitude, BodyE=Body/Wash Energy (1-4kHz), BrillE=Brilliance/Attack Energy (4-10kHz), SustainMs=Sustain Duration")
+                print("      Str=Onset Strength, Amp=Peak Amplitude, Primary=Body/Wash Energy (1-4kHz), Secondary=Brilliance/Attack Energy (4-10kHz), SustainMs=Sustain Duration")
                 min_sustain_ms = stem_config.get('min_sustain_ms', 50)
                 print(f"      Minimum sustain duration: {min_sustain_ms}ms")
 
@@ -895,7 +933,7 @@ def process_stem_to_midi(
                     
                     print("\n        Pass 2 - Statistical Outlier Detection:")
                     print(f"        Badness threshold: {badness_threshold} (adjustable in midiconfig.yaml)")
-                    print(f"        Median FundE/BodyE ratio: {stats_params['median_ratio']:.3f}")
+                    print(f"        Median Primary/Secondary ratio: {stats_params['median_ratio']:.3f}")
                     print(f"        Median Total energy: {stats_params['median_total']:.1f}")
                     
                     # Count pass 2 results
@@ -982,6 +1020,12 @@ def process_stem_to_midi(
     if stem_type in ['snare', 'kick', 'toms'] and stem_geomeans is not None and len(stem_geomeans) > 0:
         # For spectrally-filtered stems, use geometric mean
         normalized_values = normalize_values(stem_geomeans)
+    elif stem_type == 'hihat' and len(onset_strengths) > 0:
+        # For hihat, use onset strength (from detection) not peak amplitude
+        # peak_amplitude is measured 10ms after detection time, which can be:
+        # - Too early for loud hits (still in attack → reads as quiet)
+        # - Too late for quiet hits (past peak → reads as loud)
+        normalized_values = normalize_values(onset_strengths)
     elif len(peak_amplitudes) > 0:
         # For other stems, use peak amplitude
         normalized_values = normalize_values(peak_amplitudes)
