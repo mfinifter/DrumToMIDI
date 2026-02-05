@@ -217,44 +217,72 @@ class SettingsManager {
      * Reset settings to defaults for a specific operation
      */
     resetOperation(operation) {
-        const defaults = {
-            'separate': {
-                'device': 'auto',
-                'overlap': 4,
-                'wiener': 0
-            },
-            'cleanup': {
-                'threshold': -30.0,
-                'ratio': 10.0,
-                'attack': 1.0,
-                'release': 100.0
-            },
-            'midi': {
-                'onset-threshold': 0.3,
-                'onset-delta': 0.01,
-                'min-velocity': 40,
-                'max-velocity': 127,
-                'tempo': null,
-                'detect-hihat-open': false
-            },
-            'video': {
-                'fps': 60,
-                'resolution': '1080p',
-                'audio-source': '',
-                'fall-speed': 1.0
-            }
+        // Map operation names to setting categories
+        const operationToCategoryMap = {
+            'separate': ['separation'],
+            'cleanup': ['cleanup'],
+            'midi': ['onset_detection', 'midi_output'],
+            'video': ['video']
         };
         
-        const operationDefaults = defaults[operation] || {};
-        Object.keys(operationDefaults).forEach(key => {
-            this.settings[key] = operationDefaults[key];
-            const input = document.getElementById(`setting-${key}`);
-            if (input) {
-                this.setInputValue(input, operationDefaults[key]);
-            }
-        });
+        const categories = operationToCategoryMap[operation] || [];
         
-        this.saveSettings();
+        if (this.schema) {
+            // Use schema defaults
+            for (const category of categories) {
+                const categorySettings = this.schema.categories[category]?.settings || [];
+                for (const settingKey of categorySettings) {
+                    const setting = this.schema.settings[settingKey];
+                    if (setting && setting.default !== null) {
+                        const webKey = this.schemaKeyToSettingKey(settingKey);
+                        this.settings[webKey] = setting.default;
+                    }
+                }
+            }
+        } else {
+            // Fallback to hardcoded defaults if schema not loaded
+            const defaults = {
+                'separate': {
+                    'device': 'auto',
+                    'overlap': 4,
+                    'wiener': 0
+                },
+                'cleanup': {
+                    'threshold': -30.0,
+                    'ratio': 10.0,
+                    'attack': 1.0,
+                    'release': 100.0
+                },
+                'midi': {
+                    'onset-threshold': 0.3,
+                    'onset-delta': 0.01,
+                    'min-velocity': 80,
+                    'max-velocity': 110,
+                    'tempo': null,
+                    'detect-hihat-open': false
+                },
+                'video': {
+                    'fps': 60,
+                    'resolution': '1080p',
+                    'audio-source': '',
+                    'fall-speed': 1.0
+                }
+            };
+            
+            const operationDefaults = defaults[operation] || {};
+            Object.keys(operationDefaults).forEach(key => {
+                this.settings[key] = operationDefaults[key];
+                const input = document.getElementById(`setting-${key}`);
+                if (input) {
+                    this.setInputValue(input, operationDefaults[key]);
+                }
+            });
+        }
+        
+        this.save();
+        this.updateUI();
+        
+        showToast(`Reset ${operation} settings to defaults`, 'success');
     }
     
     /**

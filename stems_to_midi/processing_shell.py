@@ -10,22 +10,27 @@ from pathlib import Path
 from typing import Union, List, Dict, Optional
 
 # Import functional core helpers
-from .helpers import (
+from .analysis_core import (
     ensure_mono,
     calculate_peak_amplitude,
     should_keep_onset,
     filter_onsets_by_spectral,
     normalize_values,
     estimate_velocity,
-    classify_tom_pitch
+    classify_tom_pitch,
+    classify_cymbal_pitch,
+    classify_snare_pitch
 )
 
 # Import detection functions
-from .detection import (
+from .detection_shell import (
     detect_onsets,
     detect_tom_pitch,
+    detect_cymbal_pitch,
+    detect_snare_pitch,
     detect_hihat_state
 )
+from .energy_detection_shell import detect_onsets_energy_based
 
 # Import config structures
 from .config import DrumMapping
@@ -75,10 +80,26 @@ def _load_and_validate_audio(
     if audio.shape[0] > sr:
         print(f"    First second min: {audio[:sr].min():.6f}, max: {audio[:sr].max():.6f}, mean: {audio[:sr].mean():.6f}")
 
-    # Convert to mono if configured
-    if config['audio']['force_mono'] and audio.ndim == 2:
+    # Handle stereo/mono conversion based on per-stem or global settings
+    # Priority: per-stem use_stereo > global force_mono
+    stem_config = config.get(stem_type, {})
+    use_stereo = stem_config.get('use_stereo', None)
+    
+    # If per-stem setting not specified, fall back to global force_mono
+    if use_stereo is None:
+        # Legacy behavior: respect global force_mono setting
+        use_stereo = not config['audio'].get('force_mono', True)
+    
+    if not use_stereo and audio.ndim == 2:
+        # Convert to mono
         audio = ensure_mono(audio)
         print("    Converted stereo to mono")
+    elif use_stereo and audio.ndim == 2:
+        # Keep stereo for spatial analysis
+        print("    Keeping stereo for spatial analysis")
+    elif use_stereo and audio.ndim == 1:
+        # Mono file but stereo requested - just keep mono
+        print("    Audio is mono (no stereo info available)")
 
     # Check if audio is essentially silent
     max_amplitude = np.max(np.abs(audio))
@@ -88,6 +109,38 @@ def _load_and_validate_audio(
     if max_amplitude < silence_threshold:
         print("    Audio is silent, skipping...")
         return None, None
+
+    # Amplitude normalization (per-stem or global setting)
+    # This ensures spectral energy thresholds work consistently across quiet/loud recordings
+    normalize_amplitude = stem_config.get('normalize_amplitude', 
+                                          config.get('audio', {}).get('normalize_amplitude', False))
+    
+    if normalize_amplitude and max_amplitude > 0:
+        target_amplitude = config.get('audio', {}).get('target_amplitude', 0.8)
+        if max_amplitude < target_amplitude:  # Only normalize if too quiet
+            scale_factor = target_amplitude / max_amplitude
+            audio = audio * scale_factor
+            print(f"    Normalized amplitude: {max_amplitude:.6f} -> {target_amplitude:.2f} (scale: {scale_factor:.2f}x)")
+
+    # Stereo channel balance normalization (per-stem or global setting)
+    # This equalizes L/R channel levels for fair detection when one channel is louder
+    normalize_stereo_balance = stem_config.get('normalize_stereo_balance',
+                                               config.get('audio', {}).get('normalize_stereo_balance', False))
+    
+    if normalize_stereo_balance and audio.ndim == 2:
+        left_rms = np.sqrt(np.mean(audio[:, 0] ** 2))
+        right_rms = np.sqrt(np.mean(audio[:, 1] ** 2))
+        
+        if left_rms > 0 and right_rms > 0:
+            # Normalize each channel to equal RMS
+            target_rms = (left_rms + right_rms) / 2
+            left_scale = target_rms / left_rms
+            right_scale = target_rms / right_rms
+            
+            audio[:, 0] *= left_scale
+            audio[:, 1] *= right_scale
+            
+            print(f"    Balanced stereo channels: L×{left_scale:.2f}, R×{right_scale:.2f} (R/L was {right_rms/left_rms:.2f}x)")
 
     return audio, sr
 
@@ -220,6 +273,190 @@ def _detect_tom_pitches(
     return tom_classifications
 
 
+def _detect_cymbal_pitches(
+    audio: np.ndarray,
+    sr: int,
+    onset_times: np.ndarray,
+    config: Dict,
+    pan_positions: Optional[List[float]] = None,
+    spectral_data: Optional[List[Dict]] = None
+) -> Optional[np.ndarray]:
+    """
+    Detect and classify cymbal pitches, optionally using pan position.
+    
+    Helper function for process_stem_to_midi (imperative shell).
+    
+    Args:
+        audio: Audio signal
+        sr: Sample rate
+        onset_times: Times of detected onsets
+        config: Configuration dictionary
+        pan_positions: Optional pan positions for each onset (-1 to +1)
+        spectral_data: Optional spectral analysis data for each onset
+    
+    Returns:
+        Array of cymbal classifications (0=crash, 1=ride, 2=chinese) or None
+    """
+    if len(onset_times) == 0:
+        return None
+    
+    cymbal_config = config.get('cymbals', {})
+    enable_pitch = cymbal_config.get('enable_pitch_detection', True)
+    
+    if not enable_pitch:
+        return None
+    
+    print("\n    Detecting cymbal pitches...")
+    pitch_method = cymbal_config.get('pitch_method', 'yin')
+    min_pitch = cymbal_config.get('min_pitch_hz', 200.0)
+    max_pitch = cymbal_config.get('max_pitch_hz', 1000.0)
+    
+    # Detect pitch for each cymbal hit
+    detected_pitches = []
+    for onset_time in onset_times:
+        pitch = detect_cymbal_pitch(
+            audio, sr, onset_time, 
+            method=pitch_method,
+            min_hz=min_pitch,
+            max_hz=max_pitch
+        )
+        detected_pitches.append(pitch)
+    
+    detected_pitches = np.array(detected_pitches)
+    
+    # Show detected pitches
+    valid_pitches = detected_pitches[detected_pitches > 0]
+    if len(valid_pitches) > 0:
+        print(f"    Detected pitches: min={np.min(valid_pitches):.1f}Hz, max={np.max(valid_pitches):.1f}Hz, mean={np.mean(valid_pitches):.1f}Hz")
+        print(f"    Unique pitches: {len(np.unique(valid_pitches))}")
+    else:
+        print("    Warning: No valid pitches detected, all cymbals will use default (crash) note")
+    
+    # Classify into crash/ride/chinese
+    # TODO: Replace with clustering-based classification (Phase 6)
+    # Current implementation uses hard-coded pan thresholds (-0.25/+0.25)
+    # which don't adapt to recording characteristics.
+    # Use pan-aware classification if pan positions available
+    if pan_positions is not None and len(pan_positions) == len(onset_times):
+        from .analysis_core import classify_cymbal_by_pan
+        
+        print(f"    Using pan-aware classification...")
+        cymbal_classifications = []
+        for i, (pitch, pan) in enumerate(zip(detected_pitches, pan_positions)):
+            # Get spectral features for this onset if available
+            spectral_features = spectral_data[i] if spectral_data and i < len(spectral_data) else None
+            
+            # Classify using pan + pitch + spectral
+            classification = classify_cymbal_by_pan(pan, pitch, spectral_features)
+            cymbal_classifications.append(classification)
+        
+        cymbal_classifications = np.array(cymbal_classifications)
+    else:
+        # Fall back to pitch-only classification
+        print(f"    Using pitch-only classification (no pan data)...")
+        cymbal_classifications = classify_cymbal_pitch(detected_pitches)
+    
+    # Show classification summary
+    crash_count = np.sum(cymbal_classifications == 0)
+    ride_count = np.sum(cymbal_classifications == 1)
+    chinese_count = np.sum(cymbal_classifications == 2)
+    print(f"    Cymbal classification: {crash_count} crash, {ride_count} ride, {chinese_count} chinese")
+    
+    # Show detailed pitch table (if not too many)
+    if len(onset_times) <= 20:
+        if pan_positions:
+            print(f"\n      {'Time':>8s} {'Pitch(Hz)':>10s} {'Pan':>6s} {'Cymbal':>8s}")
+            for i, (time, pitch, pan, classification) in enumerate(zip(onset_times, detected_pitches, pan_positions, cymbal_classifications)):
+                cymbal_name = ['Crash', 'Ride', 'Chinese'][classification]
+                pitch_str = f"{pitch:.1f}" if pitch > 0 else "N/A"
+                pan_str = f"{pan:+.2f}"
+                print(f"      {time:8.3f} {pitch_str:>10s} {pan_str:>6s} {cymbal_name:>8s}")
+        else:
+            print(f"\n      {'Time':>8s} {'Pitch(Hz)':>10s} {'Cymbal':>8s}")
+            for i, (time, pitch, classification) in enumerate(zip(onset_times, detected_pitches, cymbal_classifications)):
+                cymbal_name = ['Crash', 'Ride', 'Chinese'][classification]
+                pitch_str = f"{pitch:.1f}" if pitch > 0 else "N/A"
+                print(f"      {time:8.3f} {pitch_str:>10s} {cymbal_name:>8s}")
+    
+    return cymbal_classifications
+
+
+def _detect_snare_pitches(
+    audio: np.ndarray,
+    sr: int,
+    onset_times: np.ndarray,
+    config: Dict
+) -> Optional[np.ndarray]:
+    """
+    Detect and classify snare pitches.
+    
+    Helper function for process_stem_to_midi (imperative shell).
+    
+    Args:
+        audio: Audio signal
+        sr: Sample rate
+        onset_times: Times of detected onsets
+        config: Configuration dictionary
+    
+    Returns:
+        Array of snare classifications (0=snare, 1=rimshot, 2=clap, 3=clap+snare) or None
+    """
+    if len(onset_times) == 0:
+        return None
+    
+    snare_config = config.get('snare', {})
+    enable_pitch = snare_config.get('enable_pitch_detection', True)
+    
+    if not enable_pitch:
+        return None
+    
+    print("\n    Detecting snare pitch characteristics...")
+    pitch_method = snare_config.get('pitch_method', 'yin')
+    min_pitch = snare_config.get('min_pitch_hz', 100.0)
+    max_pitch = snare_config.get('max_pitch_hz', 500.0)
+    
+    # Detect pitch for each snare hit
+    detected_pitches = []
+    for onset_time in onset_times:
+        pitch = detect_snare_pitch(
+            audio, sr, onset_time, 
+            method=pitch_method,
+            min_hz=min_pitch,
+            max_hz=max_pitch
+        )
+        detected_pitches.append(pitch)
+    
+    detected_pitches = np.array(detected_pitches)
+    
+    # Show detected pitches
+    valid_pitches = detected_pitches[detected_pitches > 0]
+    if len(valid_pitches) > 0:
+        print(f"    Detected pitches: min={np.min(valid_pitches):.1f}Hz, max={np.max(valid_pitches):.1f}Hz, mean={np.mean(valid_pitches):.1f}Hz")
+        print(f"    Unique pitches: {len(np.unique(valid_pitches))}")
+    else:
+        print("    Warning: No valid pitches detected, all will use default (snare) note")
+    
+    # Classify into snare/rimshot/clap/clap+snare
+    snare_classifications = classify_snare_pitch(detected_pitches)
+    
+    # Show classification summary
+    snare_count = np.sum(snare_classifications == 0)
+    rimshot_count = np.sum(snare_classifications == 1)
+    clap_count = np.sum(snare_classifications == 2)
+    clap_snare_count = np.sum(snare_classifications == 3)
+    print(f"    Snare classification: {snare_count} snare, {rimshot_count} rimshot, {clap_count} clap, {clap_snare_count} clap+snare")
+    
+    # Show detailed pitch table (if not too many)
+    if len(onset_times) <= 20:
+        print(f"\n      {'Time':>8s} {'Pitch(Hz)':>10s} {'Type':>12s}")
+        for i, (time, pitch, classification) in enumerate(zip(onset_times, detected_pitches, snare_classifications)):
+            type_name = ['Snare', 'Rimshot', 'Clap', 'Clap+Snare'][classification]
+            pitch_str = f"{pitch:.1f}" if pitch > 0 else "N/A"
+            print(f"      {time:8.3f} {pitch_str:>10s} {type_name:>12s}")
+    
+    return snare_classifications
+
+
 def _create_midi_events(
     onset_times: np.ndarray,
     normalized_values: np.ndarray,
@@ -229,9 +466,12 @@ def _create_midi_events(
     max_velocity: int,
     hihat_states: List[str],
     tom_classifications: Optional[np.ndarray],
+    cymbal_classifications: Optional[np.ndarray],
+    snare_classifications: Optional[np.ndarray],
     drum_mapping: DrumMapping,
     config: Dict,
-    sustain_durations: Optional[List[float]] = None
+    sustain_durations: Optional[List[float]] = None,
+    spectral_data: Optional[List[Dict]] = None
 ) -> List[Dict]:
     """
     Create MIDI events from onset data.
@@ -247,12 +487,15 @@ def _create_midi_events(
         max_velocity: Maximum MIDI velocity
         hihat_states: List of hihat states (closed/open/handclap)
         tom_classifications: Tom classifications (low/mid/high)
+        cymbal_classifications: Cymbal classifications (crash/ride/chinese)
+        snare_classifications: Snare classifications (snare/rimshot/clap/clap+snare)
         drum_mapping: MIDI note mapping
         config: Configuration dictionary
         sustain_durations: Optional list of sustain durations in milliseconds (for cymbals and hihat foot-close events)
+        spectral_data: Optional list of spectral analysis dicts (Detection Output Contract)
     
     Returns:
-        List of MIDI event dictionaries
+        List of MIDI event dictionaries with optional spectral fields
     """
     # Get timing offset for this stem type (applied to MIDI timing only, not audio analysis)
     stem_config = config.get(stem_type, {})
@@ -268,7 +511,7 @@ def _create_midi_events(
         # Calculate velocity from normalized value
         velocity = estimate_velocity(value, min_velocity, max_velocity)
         
-        # Adjust note for handclap, open hi-hat, or tom classification
+        # Adjust note for handclap, open hi-hat, tom/cymbal/snare classification
         if stem_type == 'hihat' and hihat_states[i] == 'handclap':
             midi_note = drum_mapping.handclap
         elif stem_type == 'hihat' and hihat_states[i] == 'open':
@@ -281,6 +524,24 @@ def _create_midi_events(
                 midi_note = drum_mapping.tom_high
             else:  # mid or default
                 midi_note = drum_mapping.tom_mid
+        elif stem_type == 'cymbals' and cymbal_classifications is not None and i < len(cymbal_classifications):
+            # Use crash/ride/chinese note based on pitch classification
+            if cymbal_classifications[i] == 0:
+                midi_note = drum_mapping.crash
+            elif cymbal_classifications[i] == 2:
+                midi_note = drum_mapping.chinese
+            else:  # ride or default
+                midi_note = drum_mapping.ride
+        elif stem_type == 'snare' and snare_classifications is not None and i < len(snare_classifications):
+            # Use snare/rimshot/clap/clap+snare note based on pitch classification
+            if snare_classifications[i] == 0:
+                midi_note = drum_mapping.snare
+            elif snare_classifications[i] == 1:
+                midi_note = drum_mapping.snare_rimshot
+            elif snare_classifications[i] == 2:
+                midi_note = drum_mapping.snare_clap
+            else:  # clap+snare
+                midi_note = drum_mapping.snare_clap_snare
         else:
             midi_note = note
         
@@ -304,12 +565,33 @@ def _create_midi_events(
         # Apply timing offset to MIDI event (compensates for onset detection timing)
         midi_time = float(time) + timing_offset
         
-        events.append({
+        # Create base event with MIDI essentials
+        event = {
             'time': midi_time,
             'note': int(midi_note),
             'velocity': int(velocity),
             'duration': float(duration)
-        })
+        }
+        
+        # Add spectral data if available (Detection Output Contract)
+        # MIDI export ignores these extra fields; analysis/learning tools use them
+        if spectral_data is not None and i < len(spectral_data):
+            onset_info = spectral_data[i]
+            # Common fields
+            event['onset_strength'] = onset_info.get('strength')
+            event['peak_amplitude'] = onset_info.get('amplitude')
+            event['geomean'] = onset_info.get('body_wire_geomean')
+            event['total_energy'] = onset_info.get('total_energy')
+            event['status'] = onset_info.get('status')
+            # Stem-specific energy bands (use generic names from contract)
+            event['primary_energy'] = onset_info.get('primary_energy')
+            event['secondary_energy'] = onset_info.get('secondary_energy')
+            if 'tertiary_energy' in onset_info:
+                event['tertiary_energy'] = onset_info.get('tertiary_energy')
+            if 'sustain_ms' in onset_info:
+                event['sustain_ms'] = onset_info.get('sustain_ms')
+        
+        events.append(event)
         
         # Generate foot-close event for open hihats
         if (stem_type == 'hihat' and hihat_states[i] == 'open' and 
@@ -369,12 +651,27 @@ def process_stem_to_midi(
         max_duration: Maximum duration in seconds to analyze (None = all)
     
     Returns:
-        List of MIDI events: [{'time': float, 'note': int, 'velocity': int, 'duration': float}, ...]
+        Dict with:
+            'events': List of MIDI events
+            'all_onset_data': List of all detected onsets (kept + filtered)
+            'spectral_config': Spectral config used for this stem
     """
     # Step 1: Load and validate audio
     audio, sr = _load_and_validate_audio(audio_path, config, stem_type, max_duration)
     if audio is None:
-        return []
+        return {'events': [], 'all_onset_data': [], 'spectral_config': None}
+    
+    # Track if we're processing stereo (for pan metadata later)
+    is_stereo = audio.ndim == 2
+    stereo_audio = audio if is_stereo else None  # Keep reference to stereo data
+    
+    # If stereo, create mono version for onset detection (average channels)
+    # Onset detection works better on mono, but we'll add pan info after
+    if is_stereo:
+        from .analysis_core import ensure_mono
+        audio_mono = ensure_mono(audio)
+    else:
+        audio_mono = audio
     
     # Step 2: Configure and detect onsets
     onset_params = _configure_onset_detection(config, stem_type)
@@ -392,14 +689,79 @@ def process_stem_to_midi(
     # hop_length always comes from global config (not per-stem)
     onset_params['hop_length'] = hop_length
 
-    onset_times, onset_strengths = detect_onsets(
-        audio,
-        sr,
-        hop_length=onset_params['hop_length'],
-        threshold=onset_params['threshold'],
-        delta=onset_params['delta'],
-        wait=onset_params['wait']
-    )
+    # Determine which detection method to use
+    # DEFAULT: New energy-based detection (stereo-aware, scipy peaks, backtracked)
+    # FALLBACK: Old librosa detection (use_librosa_detection: true per-stem)
+    use_librosa = config.get(stem_type, {}).get('use_librosa_detection', False)
+    
+    if use_librosa:
+        # OLD METHOD: Librosa onset detection (fallback option)
+        print(f"    Using librosa onset detection (legacy mode)")
+        onset_times, onset_strengths = detect_onsets(
+            audio_mono,  # Use mono for onset detection
+            sr,
+            hop_length=onset_params['hop_length'],
+            threshold=onset_params['threshold'],
+            delta=onset_params['delta'],
+            wait=onset_params['wait']
+        )
+        
+        # Calculate pan position for each onset if stereo (post-hoc)
+        pan_positions = None
+        pan_classifications = None
+        if is_stereo and len(onset_times) > 0:
+            from .stereo_core import calculate_pan_position, classify_onset_by_pan
+            
+            print(f"    Calculating pan positions for {len(onset_times)} onsets...")
+            pan_positions = []
+            pan_classifications = []
+            
+            for onset_time in onset_times:
+                onset_sample = int(onset_time * sr)
+                pan = calculate_pan_position(stereo_audio, onset_sample, sr, window_ms=10.0)
+                pan_class = classify_onset_by_pan(pan, center_threshold=0.15)
+                pan_positions.append(pan)
+                pan_classifications.append(pan_class)
+            
+            # Summary of pan distribution
+            left_count = pan_classifications.count('left')
+            center_count = pan_classifications.count('center')
+            right_count = pan_classifications.count('right')
+            print(f"    Pan distribution: {left_count} left, {center_count} center, {right_count} right")
+    else:
+        # NEW METHOD (DEFAULT): Energy-based detection with scipy peaks + backtracking
+        print(f"    Using energy-based detection (scipy peaks, stereo-aware, backtracked)")
+        
+        # Get per-stem calibration parameters (with sensible defaults)
+        threshold_db = config.get(stem_type, {}).get('threshold_db', 15.0)
+        min_peak_spacing_ms = config.get(stem_type, {}).get('min_peak_spacing_ms', 100.0)
+        min_absolute_energy = config.get(stem_type, {}).get('min_absolute_energy', 0.01)
+        merge_window_ms = config.get(stem_type, {}).get('merge_window_ms', 150.0)
+        energy_method = config.get(stem_type, {}).get('energy_method', 'rms')
+        peak_hold_ms = config.get(stem_type, {}).get('peak_hold_ms', 3.0)
+        
+        onset_times, onset_strengths, extra_data = detect_onsets_energy_based(
+            audio if is_stereo else audio_mono,  # Pass stereo if available
+            sr,
+            threshold_db=threshold_db,
+            min_peak_spacing_ms=min_peak_spacing_ms,
+            min_absolute_energy=min_absolute_energy,
+            merge_window_ms=merge_window_ms,
+            hop_length=onset_params['hop_length'],
+            method=energy_method,
+            peak_hold_ms=peak_hold_ms,
+        )
+        
+        # Pan information already calculated in detection
+        pan_positions = extra_data.get('pan_positions')
+        pan_classifications = extra_data.get('pan_classifications')
+        
+        # Summary of pan distribution
+        if pan_classifications:
+            left_count = pan_classifications.count('left')
+            center_count = pan_classifications.count('center')
+            right_count = pan_classifications.count('right')
+            print(f"    Pan distribution: {left_count} left, {center_count} center, {right_count} right")
 
     # Debug: Print all raw detected onset times before filtering
     print(f"    Raw detected onset times (s): {onset_times}")
@@ -417,11 +779,16 @@ def process_stem_to_midi(
     print(f"    Found {len(onset_times)} hits (before filtering) -> MIDI note {getattr(drum_mapping, stem_type)}")
     
     if len(onset_times) == 0:
-        return []
+        return {'events': [], 'all_onset_data': [], 'spectral_config': None}
     
-    # Step 3: Calculate peak amplitudes for all onsets
+    # Step 3: Calculate event durations (NEW)
+    from .analysis_core import calculate_event_durations
+    durations = calculate_event_durations(onset_times, audio_mono, sr)
+    print(f"    Calculated event durations: min={np.min(durations):.3f}s, max={np.max(durations):.3f}s, mean={np.mean(durations):.3f}s")
+    
+    # Step 4: Calculate peak amplitudes for all onsets
     peak_amplitudes = np.array([
-        calculate_peak_amplitude(audio, int(onset_time * sr), sr, window_ms=10.0)
+        calculate_peak_amplitude(audio_mono, int(onset_time * sr), sr, window_ms=10.0)
         for onset_time in onset_times
     ])
     
@@ -446,11 +813,12 @@ def process_stem_to_midi(
             onset_times,
             onset_strengths,
             peak_amplitudes,
-            audio,
+            audio_mono,  # Use mono for spectral analysis
             sr,
             stem_type,
             config,
-            learning_mode=learning_mode
+            learning_mode=learning_mode,
+            durations=durations  # NEW: Pass event durations as keyword arg
         )
 
         # Extract filtered results
@@ -463,11 +831,12 @@ def process_stem_to_midi(
         cymbal_sustain_durations = filter_result['filtered_sustains'] if stem_type == 'cymbals' else None
         all_onset_data = filter_result['all_onset_data']
         spectral_config = filter_result['spectral_config']
+        filtered_onset_data = filter_result.get('filtered_onset_data', [])
 
         # Show ALL onset data and spectral chart if debug flags are enabled
         if show_all_onsets or show_spectral_data:
             geomean_threshold = spectral_config['geomean_threshold'] if spectral_config else None
-            energy_labels = spectral_config['energy_labels'] if spectral_config else {'primary': 'BodyE', 'secondary': 'WireE'}
+            energy_labels = spectral_config['energy_labels'] if spectral_config else {'primary': 'Primary', 'secondary': 'Secondary'}
             stem_config = config.get(stem_type, {})
 
             print("\n      ALL DETECTED ONSETS - SPECTRAL ANALYSIS:")
@@ -478,19 +847,19 @@ def process_stem_to_midi(
 
             # Configure labels based on stem type
             if stem_type == 'snare':
-                print("      Str=Onset Strength, Amp=Peak Amplitude, BodyE=Body Energy (150-400Hz), WireE=Wire Energy (2-8kHz)")
+                print("      Str=Onset Strength, Amp=Peak Amplitude, Primary=Body Energy (150-400Hz), Secondary=Wire Energy (2-8kHz)")
             elif stem_type == 'kick':
-                print("      Str=Onset Strength, Amp=Peak Amplitude, FundE=Fundamental Energy (40-80Hz), BodyE=Body Energy (80-150Hz)")
+                print("      Str=Onset Strength, Amp=Peak Amplitude, Primary=Fundamental Energy (40-80Hz), Secondary=Body Energy (80-150Hz)")
             elif stem_type == 'toms':
-                print("      Str=Onset Strength, Amp=Peak Amplitude, FundE=Fundamental Energy (60-150Hz), BodyE=Body Energy (150-400Hz)")
+                print("      Str=Onset Strength, Amp=Peak Amplitude, Primary=Fundamental Energy (60-150Hz), Secondary=Body Energy (150-400Hz)")
             elif stem_type == 'hihat':
-                print("      Str=Onset Strength, Amp=Peak Amplitude, BodyE=Body Energy (500-2kHz), SizzleE=Sizzle Energy (6-12kHz), SustainMs=Sustain Duration")
+                print("      Str=Onset Strength, Amp=Peak Amplitude, Primary=Body Energy (500-2kHz), Secondary=Sizzle Energy (6-12kHz), SustainMs=Sustain Duration")
                 min_sustain_ms = stem_config.get('min_sustain_ms', 25)
                 print(f"      Minimum sustain duration: {min_sustain_ms}ms (filters out handclap bleed)")
                 open_sustain_ms = stem_config.get('open_sustain_ms', 150)
                 print(f"      Open/Closed threshold: {open_sustain_ms}ms (>={open_sustain_ms}ms = open hihat)")
             elif stem_type == 'cymbals':
-                print("      Str=Onset Strength, Amp=Peak Amplitude, BodyE=Body/Wash Energy (1-4kHz), BrillE=Brilliance/Attack Energy (4-10kHz), SustainMs=Sustain Duration")
+                print("      Str=Onset Strength, Amp=Peak Amplitude, Primary=Body/Wash Energy (1-4kHz), Secondary=Brilliance/Attack Energy (4-10kHz), SustainMs=Sustain Duration")
                 min_sustain_ms = stem_config.get('min_sustain_ms', 50)
                 print(f"      Minimum sustain duration: {min_sustain_ms}ms")
 
@@ -568,7 +937,7 @@ def process_stem_to_midi(
                     
                     print("\n        Pass 2 - Statistical Outlier Detection:")
                     print(f"        Badness threshold: {badness_threshold} (adjustable in midiconfig.yaml)")
-                    print(f"        Median FundE/BodyE ratio: {stats_params['median_ratio']:.3f}")
+                    print(f"        Median Primary/Secondary ratio: {stats_params['median_ratio']:.3f}")
                     print(f"        Median Total energy: {stats_params['median_total']:.1f}")
                     
                     # Count pass 2 results
@@ -632,7 +1001,7 @@ def process_stem_to_midi(
             print(f"        Pass 2 Rejected (retriggering): {rejected_count}")
     
     if len(onset_times) == 0:
-        return []
+        return {'events': [], 'all_onset_data': all_onset_data, 'spectral_config': spectral_config}
     
     # Step 5: Get MIDI note number
     note = getattr(drum_mapping, stem_type)
@@ -642,7 +1011,7 @@ def process_stem_to_midi(
         hihat_config = config.get('hihat', {})
         open_sustain_threshold = hihat_config.get('open_sustain_ms', 150)
         hihat_states = detect_hihat_state(
-            audio, sr, onset_times,
+            audio_mono, sr, onset_times,
             sustain_durations=hihat_sustain_durations,
             open_sustain_threshold_ms=open_sustain_threshold,
             spectral_data=hihat_spectral_data,
@@ -655,6 +1024,12 @@ def process_stem_to_midi(
     if stem_type in ['snare', 'kick', 'toms'] and stem_geomeans is not None and len(stem_geomeans) > 0:
         # For spectrally-filtered stems, use geometric mean
         normalized_values = normalize_values(stem_geomeans)
+    elif stem_type == 'hihat' and len(onset_strengths) > 0:
+        # For hihat, use onset strength (from detection) not peak amplitude
+        # peak_amplitude is measured 10ms after detection time, which can be:
+        # - Too early for loud hits (still in attack → reads as quiet)
+        # - Too late for quiet hits (past peak → reads as loud)
+        normalized_values = normalize_values(onset_strengths)
     elif len(peak_amplitudes) > 0:
         # For other stems, use peak amplitude
         normalized_values = normalize_values(peak_amplitudes)
@@ -664,7 +1039,21 @@ def process_stem_to_midi(
     # Step 8: Detect and classify tom pitches (if applicable)
     tom_classifications = None
     if stem_type == 'toms':
-        tom_classifications = _detect_tom_pitches(audio, sr, onset_times, config)
+        tom_classifications = _detect_tom_pitches(audio_mono, sr, onset_times, config)
+    
+    # Step 8b: Detect and classify cymbal pitches (if applicable)
+    cymbal_classifications = None
+    if stem_type == 'cymbals':
+        cymbal_classifications = _detect_cymbal_pitches(
+            audio_mono, sr, onset_times, config,
+            pan_positions=pan_positions,
+            spectral_data=filtered_onset_data if 'filtered_onset_data' in locals() else None
+        )
+    
+    # Step 8c: Detect and classify snare pitches (if applicable)
+    snare_classifications = None
+    if stem_type == 'snare':
+        snare_classifications = _detect_snare_pitches(audio_mono, sr, onset_times, config)
     
     # Step 9: Create MIDI events
     # Pass sustain durations for cymbals (note duration) and hihats (foot-close timing)
@@ -684,11 +1073,19 @@ def process_stem_to_midi(
         max_velocity,
         hihat_states,
         tom_classifications,
+        cymbal_classifications,
+        snare_classifications,
         drum_mapping,
         config,
-        sustain_durations=sustain_durations_param
+        sustain_durations=sustain_durations_param,
+        spectral_data=filtered_onset_data
     )
     
     print(f"    Created {len(events)} MIDI events from {len(onset_times)} onsets")
     
-    return events
+    # Return dict with events and analysis data for sidecar v2
+    return {
+        'events': events,
+        'all_onset_data': all_onset_data if 'all_onset_data' in locals() else [],
+        'spectral_config': spectral_config if 'spectral_config' in locals() else None
+    }

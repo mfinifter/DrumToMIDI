@@ -10,13 +10,13 @@ from pathlib import Path
 import tempfile
 import soundfile as sf
 from stems_to_midi.config import load_config, DrumMapping
-from stems_to_midi.detection import (
+from stems_to_midi.detection_shell import (
     detect_onsets,
     estimate_velocity,
     classify_tom_pitch,
     detect_hihat_state
 )
-from stems_to_midi.processor import process_stem_to_midi
+from stems_to_midi.processing_shell import process_stem_to_midi
 from stems_to_midi.midi import create_midi_file, read_midi_notes
 
 
@@ -432,7 +432,7 @@ class TestProcessDrumToMIDI:
         onset_wait = test_config['onset_detection']['wait']
         hop_length = test_config['onset_detection']['hop_length']
         
-        events = process_stem_to_midi(
+        result = process_stem_to_midi(
             temp_path,
             'kick',
             drum_mapping,
@@ -444,7 +444,10 @@ class TestProcessDrumToMIDI:
             detect_hihat_open=False
         )
         
-        # Should detect some events
+        # Should return dict with events
+        assert isinstance(result, dict)
+        assert 'events' in result
+        events = result['events']
         assert len(events) > 0
         
         # Check event structure
@@ -473,7 +476,7 @@ class TestProcessDrumToMIDI:
             onset_wait = sample_config['onset_detection']['wait']
             hop_length = sample_config['onset_detection']['hop_length']
             
-            events = process_stem_to_midi(
+            result = process_stem_to_midi(
                 temp_path,
                 'kick',
                 drum_mapping,
@@ -485,6 +488,7 @@ class TestProcessDrumToMIDI:
             )
             
             # Silent audio should produce no events
+            events = result.get('events', [])
             assert len(events) == 0
         finally:
             temp_path.unlink()
@@ -570,7 +574,7 @@ class TestFootCloseEvents:
     
     def test_foot_close_generation_enabled(self, sample_config, drum_mapping):
         """Test foot-close events are generated when enabled."""
-        from stems_to_midi.processor import _create_midi_events
+        from stems_to_midi.processing_shell import _create_midi_events
         
         # Configure for foot-close generation
         config = sample_config.copy()
@@ -594,6 +598,8 @@ class TestFootCloseEvents:
             max_velocity=110,
             hihat_states=hihat_states,
             tom_classifications=None,
+            cymbal_classifications=None,
+            snare_classifications=None,
             drum_mapping=drum_mapping,
             config=config,
             sustain_durations=sustain_durations
@@ -617,7 +623,7 @@ class TestFootCloseEvents:
     
     def test_foot_close_generation_disabled(self, sample_config, drum_mapping):
         """Test no foot-close events when disabled."""
-        from stems_to_midi.processor import _create_midi_events
+        from stems_to_midi.processing_shell import _create_midi_events
         
         config = sample_config.copy()
         config['hihat'] = {
@@ -640,6 +646,8 @@ class TestFootCloseEvents:
             max_velocity=110,
             hihat_states=hihat_states,
             tom_classifications=None,
+            cymbal_classifications=None,
+            snare_classifications=None,
             drum_mapping=drum_mapping,
             config=config,
             sustain_durations=sustain_durations
@@ -651,7 +659,7 @@ class TestFootCloseEvents:
     
     def test_foot_close_timing_calculation(self, sample_config, drum_mapping):
         """Test foot-close timing is correct (onset + sustain)."""
-        from stems_to_midi.processor import _create_midi_events
+        from stems_to_midi.processing_shell import _create_midi_events
         
         config = sample_config.copy()
         config['hihat'] = {
@@ -674,6 +682,8 @@ class TestFootCloseEvents:
             max_velocity=110,
             hihat_states=hihat_states,
             tom_classifications=None,
+            cymbal_classifications=None,
+            snare_classifications=None,
             drum_mapping=drum_mapping,
             config=config,
             sustain_durations=sustain_durations
@@ -694,7 +704,7 @@ class TestFootCloseEvents:
     
     def test_foot_close_velocity_scaling(self, sample_config, drum_mapping):
         """Test foot-close velocity is scaled from open hihat velocity."""
-        from stems_to_midi.processor import _create_midi_events
+        from stems_to_midi.processing_shell import _create_midi_events
         
         config = sample_config.copy()
         config['hihat'] = {
@@ -717,6 +727,8 @@ class TestFootCloseEvents:
             max_velocity=110,
             hihat_states=hihat_states,
             tom_classifications=None,
+            cymbal_classifications=None,
+            snare_classifications=None,
             drum_mapping=drum_mapping,
             config=config,
             sustain_durations=sustain_durations
@@ -735,7 +747,7 @@ class TestFootCloseEvents:
     
     def test_foot_close_not_for_cymbals(self, sample_config, drum_mapping):
         """Test foot-close events are not generated for cymbals."""
-        from stems_to_midi.processor import _create_midi_events
+        from stems_to_midi.processing_shell import _create_midi_events
         
         config = sample_config.copy()
         config['cymbals'] = {
@@ -757,6 +769,8 @@ class TestFootCloseEvents:
             max_velocity=110,
             hihat_states=['closed'],  # Not used for cymbals
             tom_classifications=None,
+            cymbal_classifications=None,
+            snare_classifications=None,
             drum_mapping=drum_mapping,
             config=config,
             sustain_durations=sustain_durations
@@ -772,7 +786,7 @@ class TestGetSpectralConfigWithStrength:
     
     def test_hihat_has_strength_threshold(self, sample_config):
         """Test hihat config includes strength threshold."""
-        from stems_to_midi.helpers import get_spectral_config_for_stem
+        from stems_to_midi.analysis_core import get_spectral_config_for_stem
         
         config = sample_config.copy()
         config['hihat'] = {
@@ -791,7 +805,7 @@ class TestGetSpectralConfigWithStrength:
     
     def test_strength_threshold_optional(self, sample_config):
         """Test strength threshold is optional."""
-        from stems_to_midi.helpers import get_spectral_config_for_stem
+        from stems_to_midi.analysis_core import get_spectral_config_for_stem
         
         config = sample_config.copy()
         config['kick'] = {

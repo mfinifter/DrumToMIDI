@@ -7,10 +7,149 @@ This allows MIDI extraction to be decoupled from rendering implementation.
 Type Hierarchy:
     MidiNote (base) → can be used by any renderer
     DrumNote (specialized) → includes rendering metadata (lane, color)
+    
+Detection Output Contract:
+    SpectralOnsetData → standardized spectral analysis fields for onset data
+    
+See docs/DETECTION_OUTPUT_CONTRACT.md for full specification.
 """
 
 from dataclasses import dataclass
 from typing import Tuple, List, Dict, Any, Optional
+from typing_extensions import TypedDict, NotRequired
+
+
+# ============================================================================
+# Detection Output Contract Types
+# ============================================================================
+
+class SpectralOnsetData(TypedDict):
+    """Detection Output Contract - spectral analysis for a single onset.
+    
+    This is the canonical contract for spectral data passed between:
+    - Producer: filter_onsets_by_spectral() in analysis_core.py
+    - Consumers: detect_hihat_state(), learning.py, analysis tools
+    
+    All consumers MUST use .get() with defaults for optional fields.
+    Producers MUST include all required fields.
+    
+    Required Fields (always present):
+        time: Onset time in seconds
+        strength: Normalized onset strength (0-1)
+        amplitude: Peak amplitude at onset
+        primary_energy: Energy in primary band (stem-specific meaning)
+        secondary_energy: Energy in secondary band (stem-specific meaning)
+        status: 'KEPT' | 'LEARNING' | 'FILTERED'
+    
+    Optional Fields (stem-specific):
+        tertiary_energy: Third energy band (kick only: mid frequencies)
+        body_wire_geomean: Geometric mean of body/wire for snare
+        total_energy: Sum of all energy bands
+        ratio: Energy ratio between bands
+        sustain_ms: Sustain duration for cymbals/hihat
+        
+    Stem-Specific Energy Band Meanings:
+        Snare:  primary=Body(200-800Hz), secondary=Wire(4-8kHz)
+        Kick:   primary=Sub(30-80Hz), secondary=Click(2-5kHz), tertiary=Mid(100-300Hz)
+        HiHat:  primary=Body(500-4kHz), secondary=Sizzle(8-16kHz)
+        Cymbals: primary=Body(500-4kHz), secondary=Shimmer(8-16kHz)
+        Toms:   primary=Body(80-300Hz), secondary=Attack(2-6kHz)
+    """
+    # Required fields
+    time: float
+    strength: float
+    amplitude: float
+    primary_energy: float
+    secondary_energy: float
+    status: str
+    
+    # Optional fields (use NotRequired for type safety)
+    tertiary_energy: NotRequired[float]
+    body_wire_geomean: NotRequired[float]
+    total_energy: NotRequired[float]
+    ratio: NotRequired[float]
+    sustain_ms: NotRequired[float]
+    low_energy: NotRequired[float]
+    energy_label_1: NotRequired[str]
+    energy_label_2: NotRequired[str]
+
+
+class StereoOnsetData(TypedDict):
+    """Stereo onset detection results from left, right, and mono channels.
+    
+    Used when processing audio in stereo mode (use_stereo=True) to capture
+    spatial information for better instrument identification.
+    
+    Fields:
+        left_onsets: Onset times detected in left channel (seconds)
+        right_onsets: Onset times detected in right channel (seconds)
+        mono_onsets: Onset times detected in mono (averaged) channel (seconds)
+        left_strengths: Onset strengths for left channel detections (0-1)
+        right_strengths: Onset strengths for right channel detections (0-1)
+    """
+    left_onsets: List[float]
+    right_onsets: List[float]
+    mono_onsets: List[float]
+    left_strengths: List[float]
+    right_strengths: List[float]
+
+
+class DualChannelOnsetData(TypedDict):
+    """Dual-channel onset detection with merged onsets and per-channel strengths.
+    
+    Used for clustering-based threshold optimization. Runs onset detection
+    separately on L/R channels, then merges nearby detections into unified
+    onset list with strength from both channels.
+    
+    Fields:
+        onset_times: Merged onset times (seconds) - union of L/R detections
+        left_strengths: Onset strength from left channel for each merged onset
+        right_strengths: Onset strength from right channel for each merged onset
+        pan_confidence: (R-L)/(R+L) for each onset (-1=left, 0=center, +1=right)
+    """
+    onset_times: List[float]
+    left_strengths: List[float]
+    right_strengths: List[float]
+    pan_confidence: List[float]
+
+
+class OnsetFeatures(TypedDict):
+    """Feature vector for a single onset used in clustering.
+    
+    Combines spatial (pan), spectral, pitch, and temporal features to
+    characterize each onset for clustering-based instrument identification.
+    
+    Fields:
+        time: Onset time in seconds
+        pan_confidence: (R-L)/(R+L) spatial position (-1=left, 0=center, +1=right)
+        spectral_centroid: Brightness/center of mass of spectrum (Hz)
+        spectral_rolloff: Frequency below which 85% of energy lies (Hz)
+        spectral_flatness: Measure of noise-likeness (0=tonal, 1=noisy)
+        pitch: Detected fundamental frequency in Hz (None if not detected)
+        timing_delta: Time since previous onset in seconds (None for first onset)
+        primary_energy: Energy in primary frequency band (body range)
+        secondary_energy: Energy in secondary frequency band (brilliance range)
+        geomean: Geometric mean of primary and secondary energies
+        total_energy: Sum of primary and secondary energies
+        sustain_ms: Duration of onset in milliseconds (None if not calculated)
+    """
+    time: float
+    pan_confidence: float
+    spectral_centroid: float
+    spectral_rolloff: float
+    spectral_flatness: float
+    pitch: Optional[float]
+    timing_delta: Optional[float]
+    primary_energy: float
+    secondary_energy: float
+    geomean: float
+    total_energy: float
+    sustain_ms: Optional[float]
+
+
+# Contract field names for validation
+SPECTRAL_REQUIRED_FIELDS = {'time', 'strength', 'amplitude', 'primary_energy', 'secondary_energy', 'status'}
+SPECTRAL_OPTIONAL_FIELDS = {'tertiary_energy', 'body_wire_geomean', 'total_energy', 'ratio', 'sustain_ms', 'low_energy', 'energy_label_1', 'energy_label_2'}
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,7 @@
 Shared utilities for drum separation.
 """
 from pathlib import Path
-from typing import Union, Optional, Dict
+from typing import Optional, Dict
 import soundfile as sf # type: ignore
 import torch # type: ignore
 import torchaudio # type: ignore
@@ -130,7 +130,6 @@ def _process_with_mdx23c(
 def process_stems_for_project(
     project_dir: Path,
     stems_dir: Path,
-    config_path: Union[str, Path],
     model: str = 'mdx23c',
     overlap: int = 8,
     wiener_exponent: Optional[float] = None,
@@ -149,7 +148,6 @@ def process_stems_for_project(
     Args:
         project_dir: Path to project directory
         stems_dir: Path to stems output directory (project/stems/)
-        config_path: Path to config.yaml (project-specific or root)
         model: Separation model ('mdx23c' currently supported, extensible for future models)
         overlap: Overlap value for MDX23C (2-50, higher=better quality but slower)
         wiener_exponent: Reserved for future model use (not used by MDX23C)
@@ -159,13 +157,9 @@ def process_stems_for_project(
     """
     project_dir = Path(project_dir)
     stems_dir = Path(stems_dir)
-    config_path = Path(config_path)
     
     if not project_dir.exists():
         raise RuntimeError(f'Project directory not found: {project_dir}')
-    
-    if not config_path.exists():
-        raise RuntimeError(f'Config file not found: {config_path}')
     
     if wiener_exponent is not None and wiener_exponent <= 0:
         raise ValueError('α-Wiener filter exponent should be positive.')
@@ -201,9 +195,9 @@ def process_stems_for_project(
                     # CUDA: use larger batches
                     batch_size = min(8, max(2, 16 // overlap))
                 elif device == "mps":
-                    # MPS: Always use batch_size=1 for optimal performance
-                    # Benchmarks show batch_size=1 is faster than 2 or 4 even at low overlap
-                    batch_size = 1
+                    # MPS: With 16GB RAM on M1/M2, batch size of two seems best
+                    # More testing needed for different models/devices
+                    batch_size = 2
                 else:
                     # CPU: smaller batches to avoid memory issues
                     batch_size = min(4, max(1, 8 // overlap))
@@ -226,6 +220,9 @@ def process_stems_for_project(
                 print(f"  Overlap: {overlap} (hop={separator.chunk_size//overlap} samples)")
                 if device == "cuda":
                     print("  Mixed Precision: Enabled (fp16)")
+                elif device == "mps":
+                    print("  🎮 MPS GPU acceleration enabled")
+                    print(f"  💡 Tip: Monitor GPU usage with 'sudo powermetrics --samplers gpu_power'")
             print("Progress: 10%")
         else:
             # Fallback to original implementation

@@ -4,10 +4,13 @@
         {
             "label": "Ruff: Lint on Open",
             "type": "shell",
-            "command": "conda run -n larsnet-midi ruff check . --output-format=concise || exit 0",
+            "command": "conda run -n drumtomidi ruff check . --output-format=concise || exit 0",
             "problemMatcher": {
                 "owner": "ruff",
-                "fileLocation": ["relative", "${workspaceFolder}"],
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
                 "pattern": {
                     "regexp": "^(.+):(\\d+):(\\d+):\\s+(\\w+)\\s+(.+)$",
                     "file": 1,

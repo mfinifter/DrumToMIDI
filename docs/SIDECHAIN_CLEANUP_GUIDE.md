@@ -2,25 +2,32 @@
 
 ## Overview
 
-When separating drum tracks with LarsNet, you may experience **bleed** between stems - particularly snare frequencies bleeding into the kick track. This guide explains how to use **sidechain compression** to dramatically reduce this bleed and get cleaner separated stems.
+When separating drum tracks with LarsNet, you may experience **bleed** between stems. This guide explains how to use **sidechain compression** to dramatically reduce bleed and get cleaner separated stems.
+
+Common bleed scenarios:
+- **Snare → Kick**: Snare frequencies bleeding into the kick track
+- **Hihat → Cymbals**: Hihat transients bleeding into the cymbals track
 
 ## The Problem
 
 Neural network source separation models sometimes struggle with frequency overlap between instruments:
 - **Kick and snare** share similar frequency ranges (especially in the low-mids: 80-250 Hz)
 - The snare's "body" can bleed into the kick track
-- Traditional EQ can help but may remove important kick frequencies too
+- **Hihat and cymbals** share high frequencies (4-12 kHz range)
+- Hihat transients can bleed into the cymbals track
+- Traditional EQ can help but may remove important frequencies
 
 ## The Solution: Sidechain Compression
 
-**Sidechain compression** uses the separated snare track as a trigger to automatically "duck" (reduce) the kick track whenever the snare plays. Since kick and snare hits typically don't occur at the exact same moment, this effectively removes snare bleed without affecting the actual kick hits.
+**Sidechain compression** uses one separated track as a trigger to automatically "duck" (reduce) another track when the trigger is present. Since different drum hits typically don't occur at the exact same moment, this effectively removes bleed without affecting genuine hits.
 
 ### Why This Works
 
-1. ✅ **Temporal separation**: Kick and snare hits occur at different times
-2. ✅ **Surgical precision**: Only ducks when snare is actually present
-3. ✅ **Preserves kick**: Real kick hits remain untouched
+1. ✅ **Temporal separation**: Different drum hits occur at different times
+2. ✅ **Surgical precision**: Only ducks when the trigger source is present
+3. ✅ **Preserves target**: Real hits in the target track remain untouched
 4. ✅ **Automatic**: No manual editing required
+5. ✅ **Dual cleaning**: Removes both kick-snare and cymbals-hihat bleed
 
 ---
 
@@ -45,10 +52,17 @@ python separate.py -i input/ -o separated_stems/ -w 1.5
 Run the sidechain cleanup on your separated stems:
 
 ```bash
-python sidechain_cleanup.py -i separated_stems/ -o cleaned_stems/
+python sidechain_cleanup.py
 ```
 
-**That's it!** Your cleaned stems will be in `cleaned_stems/` with snare bleed removed from the kick track.
+**That's it!** Your cleaned stems will be in the project's `cleaned/` directory with:
+- Snare bleed removed from kick track
+- Hihat bleed removed from cymbals track
+
+To skip cymbal cleaning (only clean kick):
+```bash
+python sidechain_cleanup.py --no-clean-cymbals
+```
 
 ---
 
@@ -57,27 +71,26 @@ python sidechain_cleanup.py -i separated_stems/ -o cleaned_stems/
 ### Basic Parameters
 
 ```bash
-python sidechain_cleanup.py -i separated_stems/ -o cleaned_stems/ [OPTIONS]
+python sidechain_cleanup.py [project_number] [OPTIONS]
 ```
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `-i` / `--input_dir` | *required* | Directory with separated stems (must contain track subdirs with stem files) |
-| `-o` / `--output_dir` | `cleaned_stems` | Where to save cleaned stems |
+| `project_number` | *auto-select* | Project number to process (omit to auto-select most recent) |
 | `-t` / `--threshold` | `-30.0` | Sidechain threshold in dB (lower = more sensitive) |
 | `-r` / `--ratio` | `10.0` | Compression ratio (higher = more aggressive ducking) |
 | `--attack` | `1.0` | Attack time in ms (how fast compression kicks in) |
-| `--release` | `100.0` | Release time in ms (how long kick stays ducked) |
+| `--release` | `100.0` | Release time in ms (how long target stays ducked) |
 | `--dry-wet` | `1.0` | Mix: 0.0 = original, 1.0 = fully processed |
+| `--no-clean-cymbals` | *disabled* | Skip hihat bleed removal from cymbals (only clean kick) |
 
 ### Preset Configurations
 
 #### 🔥 **Aggressive (Heavy Bleed)**
-For tracks with severe snare bleed in kick:
+For tracks with severe bleed:
 
 ```bash
-python sidechain_cleanup.py -i separated_stems/ -o cleaned_stems/ \
-  -t -40 -r 20 --attack 0.5 --release 80
+python sidechain_cleanup.py -t -40 -r 20 --attack 0.5 --release 80
 ```
 
 #### 🎯 **Balanced (Recommended)**

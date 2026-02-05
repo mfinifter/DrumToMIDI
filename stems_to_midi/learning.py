@@ -2,6 +2,11 @@
 Learning Mode Module
 
 Handles threshold learning from user-edited MIDI files.
+
+Detection Output Contract (Consumer):
+    This module CONSUMES SpectralOnsetData from analysis_core.py.
+    Uses: primary_energy, secondary_energy, tertiary_energy, strength, amplitude
+    Contract defined in midi_types.py - see SpectralOnsetData TypedDict.
 """
 
 import numpy as np
@@ -12,8 +17,8 @@ from typing import Dict, Union, Optional
 import yaml
 import copy
 
-# Import functional core helpers
-from .helpers import (
+# Import functional core
+from .analysis_core import (
     ensure_mono,
     calculate_peak_amplitude,
     analyze_onset_spectral,
@@ -26,6 +31,9 @@ from .midi import read_midi_notes
 
 # Import data structures
 from .config import DrumMapping
+
+# Note: midi_types module is available for compatibility contracts
+# but specific imports may not be directly used in this file
 
 __all__ = [
     'learn_threshold_from_midi',

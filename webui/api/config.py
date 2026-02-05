@@ -9,7 +9,7 @@ from flask import Blueprint, jsonify, request
 from pathlib import Path
 import glob
 
-from ..config_engine import get_config_engine
+from ..yaml_config_core import get_config_engine
 
 config_bp = Blueprint('config', __name__, url_prefix='/api/config')
 
@@ -21,7 +21,7 @@ def get_config(project_id: int, config_type: str):
     
     Args:
         project_id: Project number
-        config_type: One of 'config', 'midiconfig', or 'eq'
+        config_type: One of 'midiconfig' or 'eq'
     
     Returns:
         JSON with sections and fields for UI rendering

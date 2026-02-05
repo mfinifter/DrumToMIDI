@@ -15,6 +15,7 @@ from typing import Dict, Optional, List
 import logging
 from contextlib import contextmanager
 import time
+import os
 
 from mdx23c_utils import load_mdx23c_checkpoint, get_checkpoint_hyperparameters
 from device_shell import detect_best_device, validate_device
@@ -66,6 +67,10 @@ class OptimizedMDX23CProcessor:
         # Enable fp16 only for CUDA (MPS doesn't support fp16 for audio I/O)
         self.use_fp16 = use_fp16 and (device == "cuda")
         
+        # Configure CPU threading for optimal performance
+        if device == "cpu":
+            self._configure_cpu_threading()
+        
         # Load model
         logger.info(f"Loading MDX23C model from {checkpoint_path}")
         self.model = load_mdx23c_checkpoint(checkpoint_path, config_path, device=device)
@@ -87,6 +92,61 @@ class OptimizedMDX23CProcessor:
         self._init_buffers()
         
         logger.info(f"Initialized with batch_size={batch_size}, fp16={self.use_fp16}")
+    
+    def _configure_cpu_threading(self):
+        """Configure PyTorch CPU threading for optimal performance.
+        
+        On macOS, this ensures proper utilization of performance cores.
+        Without this, PyTorch defaults to a low thread count (often 4),
+        which causes underutilization and use of efficiency cores instead
+        of performance cores.
+        """
+        import multiprocessing
+        
+        # Log current state BEFORE configuration
+        initial_threads = torch.get_num_threads()
+        initial_interop = torch.get_num_interop_threads()
+        logger.info(f"🔧 CPU Threading Configuration:")
+        logger.info(f"   BEFORE: PyTorch using {initial_threads} intra-op threads, {initial_interop} inter-op threads")
+        
+        # Get total CPU count
+        cpu_count = multiprocessing.cpu_count()
+        logger.info(f"   Detected {cpu_count} total CPU cores")
+        
+        # Try to detect performance vs efficiency cores on Apple Silicon
+        num_threads = cpu_count
+        perf_cores = None
+        try:
+            if os.uname().sysname == 'Darwin':  # macOS
+                # Try to get performance core count
+                import subprocess
+                result = subprocess.run(
+                    ['sysctl', '-n', 'hw.perflevel0.physicalcpu'],
+                    capture_output=True,
+                    text=True,
+                    timeout=1
+                )
+                if result.returncode == 0:
+                    perf_cores = int(result.stdout.strip())
+                    eff_cores = cpu_count - perf_cores
+                    logger.info(f"   Detected {perf_cores} performance cores + {eff_cores} efficiency cores")
+        except Exception as e:
+            logger.debug(f"Could not detect core types: {e}")
+        
+        # Set PyTorch threading
+        # intra_op: threads for operations within a single op (e.g., matrix mult)
+        # inter_op: threads for parallelizing independent ops
+        torch.set_num_threads(num_threads)
+        torch.set_num_interop_threads(max(1, num_threads // 2))
+        
+        logger.info(f"   AFTER: PyTorch configured for {num_threads} intra-op threads, "
+                   f"{torch.get_num_interop_threads()} inter-op threads")
+        logger.info(f"   Expected CPU utilization: ~{(num_threads / cpu_count) * 100:.0f}%")
+        
+        # Set environment variables for underlying libraries (OpenMP, MKL)
+        os.environ['OMP_NUM_THREADS'] = str(num_threads)
+        os.environ['MKL_NUM_THREADS'] = str(num_threads)
+        logger.info(f"   OpenMP/MKL configured: OMP_NUM_THREADS={num_threads}, MKL_NUM_THREADS={num_threads}")
     
     def _optimize_model(self):
         """Apply inference-specific optimizations to the model."""

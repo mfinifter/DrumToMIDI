@@ -1,5 +1,5 @@
 """
-Sidechain compression to reduce bleed between stems.
+Sidechain compression to reduce bleed between stems - Imperative Shell
 
 Uses the separated snare track as a sidechain trigger to duck the kick track
 when the snare is playing, effectively removing snare bleed from the kick.
@@ -7,17 +7,25 @@ when the snare is playing, effectively removing snare bleed from the kick.
 Uses project-based workflow: automatically detects projects with stems
 and creates cleaned versions in the project/cleaned/ directory.
 
+Architecture: Imperative shell (this file) using functional core (sidechain_core.py)
+
 Usage:
     python sidechain_cleanup.py              # Auto-detect project
     python sidechain_cleanup.py 1            # Process specific project
 """
 
 from pathlib import Path
-import numpy as np # type: ignore
-import soundfile as sf # type: ignore
+import numpy as np  # type: ignore
+import soundfile as sf  # type: ignore
 import argparse
 import sys
 from typing import Union
+
+# Import functional core
+from sidechain_core import (
+    envelope_follower as _envelope_follower,
+    sidechain_compress as _sidechain_compress
+)
 
 # Import project manager
 from project_manager import (
@@ -29,6 +37,8 @@ def envelope_follower(audio: np.ndarray, sr: int, attack_ms: float = 5.0, releas
     """
     Create an envelope follower for the audio signal.
     
+    Wrapper around functional core with no added logging (core is already pure).
+    
     Args:
         audio: Input audio (mono or stereo)
         sr: Sample rate
@@ -38,30 +48,7 @@ def envelope_follower(audio: np.ndarray, sr: int, attack_ms: float = 5.0, releas
     Returns:
         Envelope of the audio signal
     """
-    # Convert to mono if stereo
-    if audio.ndim == 2:
-        audio = np.mean(audio, axis=1)
-    
-    # Get absolute values (rectify)
-    rectified = np.abs(audio)
-    
-    # Calculate coefficients
-    attack_coef = np.exp(-1.0 / (sr * attack_ms / 1000.0))
-    release_coef = np.exp(-1.0 / (sr * release_ms / 1000.0))
-    
-    # Apply envelope follower
-    envelope = np.zeros_like(rectified)
-    envelope[0] = rectified[0]
-    
-    for i in range(1, len(rectified)):
-        if rectified[i] > envelope[i-1]:
-            # Attack
-            envelope[i] = attack_coef * envelope[i-1] + (1 - attack_coef) * rectified[i]
-        else:
-            # Release
-            envelope[i] = release_coef * envelope[i-1] + (1 - release_coef) * rectified[i]
-    
-    return envelope
+    return _envelope_follower(audio, sr, attack_ms, release_ms)
 
 
 def sidechain_compress(
@@ -78,6 +65,8 @@ def sidechain_compress(
     """
     Apply sidechain compression to main audio based on sidechain audio.
     
+    Wrapper around functional core with progress reporting (imperative shell).
+    
     Args:
         main_audio: Audio to be compressed (kick track)
         sidechain_audio: Audio that triggers compression (snare track)
@@ -92,56 +81,26 @@ def sidechain_compress(
     Returns:
         Compressed audio
     """
-    # Get envelope of sidechain (snare)
     print(f"Applying sidechain compression with threshold={threshold_db}dB, ratio={ratio}:1")
-    sidechain_envelope = envelope_follower(sidechain_audio, sr, attack_ms, release_ms)
-    print("Sidechain envelope calculated.")
-    # Convert to dB
-    epsilon = 1e-10
-    sidechain_db = 20 * np.log10(sidechain_envelope + epsilon)
-    print("Sidechain envelope converted to dB.")
-    # Calculate gain reduction
-    threshold = threshold_db
-    gain_reduction_db = np.zeros_like(sidechain_db)
-    print("Status Update: Calculating gain reduction...")
-    for i in range(len(sidechain_db)):
-        # print(f"Processing sample {i+1}/{len(sidechain_db)}", end='\r')
-
-        # Every M samples, print progress converted into percentage
-        if i % 1000000 == 0:
-            progress = (i / len(sidechain_db)) * 100
-            print(f"Progress: {progress:.0f}%")
-
-        if sidechain_db[i] > threshold + knee_db:
-            # Above knee - full compression
-            over_threshold = sidechain_db[i] - threshold
-            gain_reduction_db[i] = -over_threshold * (1 - 1/ratio)
-        elif sidechain_db[i] > threshold - knee_db:
-            # In knee - soft compression
-            over_threshold = sidechain_db[i] - threshold + knee_db
-            gain_reduction_db[i] = -over_threshold**2 * (1 - 1/ratio) / (4 * knee_db)
-        # else: below threshold, no gain reduction
     
-    print("Progress: 100%")
-    print("Gain reduction calculated.")
-    # Convert gain reduction to linear
-    gain_linear = 10 ** (gain_reduction_db / 20.0)
+    # Call functional core (no side effects)
+    compressed, stats = _sidechain_compress(
+        main_audio,
+        sidechain_audio,
+        sr,
+        threshold_db,
+        ratio,
+        attack_ms,
+        release_ms,
+        makeup_gain_db,
+        knee_db
+    )
     
-    print("Applying makeup gain...")
-    # Apply makeup gain
-    makeup_gain_linear = 10 ** (makeup_gain_db / 20.0)
-    gain_linear *= makeup_gain_linear
+    # Report results (imperative shell responsibility)
+    print("Compression applied:")
+    print(f"  - Max gain reduction: {stats['max_gain_reduction_db']:.1f} dB")
+    print(f"  - Compressed {stats['compression_percentage']:.1f}% of samples")
     
-    print("Makeup gain applied.")
-    # Apply gain reduction to main audio
-    if main_audio.ndim == 2:
-        # Stereo - apply same gain to both channels
-        compressed = main_audio * gain_linear[:, np.newaxis]
-        print("Compression applied to stereo audio.")
-    else:
-        # Mono
-        compressed = main_audio * gain_linear
-        print("Compression applied to mono audio.")
     return compressed
 
 
@@ -152,10 +111,14 @@ def process_stems(
     ratio: float = 10.0,
     attack_ms: float = 1.0,
     release_ms: float = 100.0,
-    dry_wet: float = 1.0
+    dry_wet: float = 1.0,
+    clean_cymbals: bool = True
 ):
     """
     Process separated stems to remove bleed using sidechain compression.
+    
+    Removes snare bleed from kick track.
+    Optionally removes hihat bleed from cymbals track.
     
     Args:
         stems_dir: Directory containing separated stems (flat structure: trackname-kick.wav, etc.)
@@ -165,6 +128,7 @@ def process_stems(
         attack_ms: Attack time in milliseconds
         release_ms: Release time in milliseconds
         dry_wet: Mix between original (0.0) and processed (1.0)
+        clean_cymbals: If True, also remove hihat bleed from cymbals track
     """
     stems_dir = Path(stems_dir)
     output_dir = Path(output_dir)
@@ -176,20 +140,31 @@ def process_stems(
     if not kick_files:
         raise RuntimeError(f"No kick files found in {stems_dir}")
     
-    # Find tracks that have both kick and snare files
+    # Find tracks that have stems to clean
     tracks_to_process = []
     for kick_file in kick_files:
         # Extract base name (e.g., "trackname-kick.wav" -> "trackname")
         base_name = kick_file.stem.replace("-kick", "")
         snare_file = stems_dir / f"{base_name}-snare.wav"
+        cymbals_file = stems_dir / f"{base_name}-cymbals.wav"
+        hihat_file = stems_dir / f"{base_name}-hihat.wav"
         
-        if snare_file.exists():
-            tracks_to_process.append((base_name, kick_file, snare_file))
+        has_kick_snare = snare_file.exists()
+        has_cymbals_hihat = clean_cymbals and cymbals_file.exists() and hihat_file.exists()
+        
+        if has_kick_snare or has_cymbals_hihat:
+            tracks_to_process.append({
+                'base_name': base_name,
+                'kick_file': kick_file if has_kick_snare else None,
+                'snare_file': snare_file if has_kick_snare else None,
+                'cymbals_file': cymbals_file if has_cymbals_hihat else None,
+                'hihat_file': hihat_file if has_cymbals_hihat else None
+            })
         else:
-            print(f"Warning: Skipping {base_name} - missing snare file")
+            print(f"Warning: Skipping {base_name} - missing required stem pairs")
     
     if not tracks_to_process:
-        raise RuntimeError(f"No tracks found with both kick and snare files in {stems_dir}")
+        raise RuntimeError(f"No tracks found with required stem pairs in {stems_dir}")
     
     print(f"Processing {len(tracks_to_process)} track(s)...")
     print("Settings:")
@@ -198,65 +173,111 @@ def process_stems(
     print(f"  Attack: {attack_ms} ms")
     print(f"  Release: {release_ms} ms")
     print(f"  Dry/Wet: {dry_wet * 100:.0f}% processed")
+    print(f"  Clean cymbals: {'Yes' if clean_cymbals else 'No'}")
     print()
     
-    for track_idx, (base_name, kick_file, snare_file) in enumerate(tracks_to_process, 1):
+    for track_idx, track_info in enumerate(tracks_to_process, 1):
+        base_name = track_info['base_name']
         print(f"Processing: {base_name}")
         
-        # Load audio files
-        kick_audio, sr = sf.read(str(kick_file))
-        snare_audio, sr_snare = sf.read(str(snare_file))
+        sr = None
+        stems_processed = []
         
-        if sr != sr_snare:
-            print(f"  Warning: Sample rate mismatch! Kick: {sr}Hz, Snare: {sr_snare}Hz")
-            continue
+        # Process kick-snare if both exist
+        if track_info['kick_file'] and track_info['snare_file']:
+            print("  Removing snare bleed from kick track...")
+            
+            # Load audio files
+            kick_audio, sr = sf.read(str(track_info['kick_file']))
+            snare_audio, sr_snare = sf.read(str(track_info['snare_file']))
+            
+            if sr != sr_snare:
+                print(f"  Warning: Sample rate mismatch! Kick: {sr}Hz, Snare: {sr_snare}Hz")
+            else:
+                # Ensure same length
+                min_length = min(len(kick_audio), len(snare_audio))
+                kick_audio = kick_audio[:min_length]
+                snare_audio = snare_audio[:min_length]
+                
+                # Apply sidechain compression
+                kick_compressed = sidechain_compress(
+                    kick_audio,
+                    snare_audio,
+                    sr,
+                    threshold_db=threshold_db,
+                    ratio=ratio,
+                    attack_ms=attack_ms,
+                    release_ms=release_ms
+                )
+                
+                # Dry/wet mix
+                kick_final = dry_wet * kick_compressed + (1 - dry_wet) * kick_audio
+                
+                # Save cleaned kick track
+                output_file = output_dir / f'{base_name}-kick.wav'
+                sf.write(str(output_file), kick_final, sr)
+                print(f"  Saved cleaned kick: {output_file.name}")
+                stems_processed.append('kick')
         
-        # Ensure same length
-        min_length = min(len(kick_audio), len(snare_audio))
-        kick_audio = kick_audio[:min_length]
-        snare_audio = snare_audio[:min_length]
+        # Process cymbals-hihat if both exist and cleaning enabled
+        if track_info['cymbals_file'] and track_info['hihat_file']:
+            print("  Removing hihat bleed from cymbals track...")
+            
+            # Load audio files
+            cymbals_audio, sr_cymbals = sf.read(str(track_info['cymbals_file']))
+            hihat_audio, sr_hihat = sf.read(str(track_info['hihat_file']))
+            
+            if sr is None:
+                sr = sr_cymbals
+            
+            if sr_cymbals != sr_hihat:
+                print(f"  Warning: Sample rate mismatch! Cymbals: {sr_cymbals}Hz, Hihat: {sr_hihat}Hz")
+            else:
+                # Ensure same length
+                min_length = min(len(cymbals_audio), len(hihat_audio))
+                cymbals_audio = cymbals_audio[:min_length]
+                hihat_audio = hihat_audio[:min_length]
+                
+                # Apply sidechain compression
+                cymbals_compressed = sidechain_compress(
+                    cymbals_audio,
+                    hihat_audio,
+                    sr_cymbals,
+                    threshold_db=threshold_db,
+                    ratio=ratio,
+                    attack_ms=attack_ms,
+                    release_ms=release_ms
+                )
+                
+                # Dry/wet mix
+                cymbals_final = dry_wet * cymbals_compressed + (1 - dry_wet) * cymbals_audio
+                
+                # Save cleaned cymbals track
+                output_file = output_dir / f'{base_name}-cymbals.wav'
+                sf.write(str(output_file), cymbals_final, sr_cymbals)
+                print(f"  Saved cleaned cymbals: {output_file.name}")
+                stems_processed.append('cymbals')
         
-        # Apply sidechain compression
-        print("Status Update: Applying sidechain compression...")
-        kick_compressed = sidechain_compress(
-            kick_audio,
-            snare_audio,
-            sr,
-            threshold_db=threshold_db,
-            ratio=ratio,
-            attack_ms=attack_ms,
-            release_ms=release_ms
-        )
-        
-        print("  Sidechain compression applied.")
-        # Dry/wet mix
-        kick_final = dry_wet * kick_compressed + (1 - dry_wet) * kick_audio
-        
-        print("  Saving cleaned kick track...")
-
         print("Status Update: Saving Files...")
         print("Progress: 0%")
-
-        # Save to flat output directory (same structure as input)
-        output_file = output_dir / f'{base_name}-kick.wav'
-        
-        sf.write(str(output_file), kick_final, sr)
-        print(f"  Saved: {output_file}")
-        
-        print("Progress: 20%")
         
         # Copy other stems unchanged
-        stem_counter = 1
-        for stem_name in ['snare', 'toms', 'hihat', 'cymbals']:
+        stem_counter = 0
+        for stem_name in ['snare', 'toms', 'hihat', 'cymbals', 'kick']:
+            # Skip if we already processed this stem
+            if stem_name in stems_processed:
+                continue
+                
             stem_file = stems_dir / f"{base_name}-{stem_name}.wav"
             if stem_file.exists():
                 # Copy unchanged
                 stem_audio, stem_sr = sf.read(str(stem_file))
                 output_file = output_dir / f'{base_name}-{stem_name}.wav'
                 sf.write(str(output_file), stem_audio, stem_sr)
+                print(f"  Copied unchanged: {output_file.name}")
             
             stem_counter += 1
-            print(f"Progress: {stem_counter * 20}%")
+            print(f"Progress: {min(100, stem_counter * 20)}%")
 
     print("Status Update: Process complete!")
     print(f"Stems saved to: {output_dir}")
@@ -268,10 +289,14 @@ def cleanup_project_stems(
     ratio: float = 10.0,
     attack_ms: float = 1.0,
     release_ms: float = 100.0,
-    dry_wet: float = 1.0
+    dry_wet: float = 1.0,
+    clean_cymbals: bool = True
 ):
     """
     Clean up stems for a project using sidechain compression.
+    
+    Removes snare bleed from kick track.
+    Optionally removes hihat bleed from cymbals track.
     
     Args:
         project_number: Specific project to process, or None for auto-select
@@ -280,6 +305,7 @@ def cleanup_project_stems(
         attack_ms: Attack time in milliseconds
         release_ms: Release time in milliseconds
         dry_wet: Mix between original (0.0) and processed (1.0)
+        clean_cymbals: If True, also remove hihat bleed from cymbals track
     """
     # Select project
     project_info = select_project(project_number)
@@ -315,21 +341,25 @@ def cleanup_project_stems(
         ratio=ratio,
         attack_ms=attack_ms,
         release_ms=release_ms,
-        dry_wet=dry_wet
+        dry_wet=dry_wet,
+        clean_cymbals=clean_cymbals
     )
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description="Remove snare bleed from kick track using sidechain compression.",
+        description="Remove bleed between stems using sidechain compression.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process most recent project with default settings
+  # Process most recent project with default settings (cleans kick and cymbals)
   python sidechain_cleanup.py
   
   # Process specific project
   python sidechain_cleanup.py 1
+  
+  # Only clean kick track (skip cymbals)
+  python sidechain_cleanup.py --no-clean-cymbals
   
   # Aggressive ducking
   python sidechain_cleanup.py -t -40 -r 20 --attack 0.5
@@ -351,6 +381,8 @@ Examples:
                         help="Release time in milliseconds. Lower = faster recovery (default: 100).")
     parser.add_argument('--dry-wet', type=float, default=1.0,
                         help="Mix between original (0.0) and processed (1.0). Default: 1.0 (fully processed).")
+    parser.add_argument('--no-clean-cymbals', action='store_true',
+                        help="Skip cleaning hihat bleed from cymbals track (default: clean both kick and cymbals).")
     
     args = parser.parse_args()
     
@@ -366,5 +398,6 @@ Examples:
         ratio=args.ratio,
         attack_ms=args.attack,
         release_ms=args.release,
-        dry_wet=args.dry_wet
+        dry_wet=args.dry_wet,
+        clean_cymbals=not args.no_clean_cymbals
     )

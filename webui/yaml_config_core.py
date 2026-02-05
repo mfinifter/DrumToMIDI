@@ -216,7 +216,7 @@ class YAMLConfigEngine:
         
         Args:
             yaml_path: Path to YAML configuration file
-            config_type: Type of config ('midiconfig', 'config', 'eq') for schema validation
+            config_type: Type of config ('midiconfig', 'eq') for schema validation
         """
         self.yaml_path = Path(yaml_path)
         self.yaml = YAML()
@@ -228,7 +228,7 @@ class YAMLConfigEngine:
         # Infer config_type from filename if not provided
         if config_type is None:
             filename = self.yaml_path.stem  # Gets filename without extension
-            config_type = filename if filename in ['config', 'eq', 'midiconfig'] else 'midiconfig'
+            config_type = filename if filename in ['eq', 'midiconfig'] else 'midiconfig'
         self.config_type = config_type
         
         # Load schema, with fallback to empty dict if schema not found
@@ -449,21 +449,22 @@ def get_config_engine(project_id: int, config_type: str) -> YAMLConfigEngine:
         ValueError: If config_type is invalid or file doesn't exist
     """
     from pathlib import Path
+    import sys
+    
+    # Add parent directory to path for imports
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from project_manager import get_project_by_number, USER_FILES_DIR
     
     valid_types = ['config', 'midiconfig', 'eq']
     if config_type not in valid_types:
         raise ValueError(f"config_type must be one of: {', '.join(valid_types)}")
     
-    # Construct path to project config file
-    project_dir = Path(f'/app/user_files/{project_id} - *').expanduser()
-    
-    # Handle glob pattern (project name after number)
-    import glob
-    matches = glob.glob(str(project_dir))
-    if not matches:
+    # Get project using project_manager
+    project = get_project_by_number(project_id, USER_FILES_DIR)
+    if not project:
         raise ValueError(f"Project {project_id} not found")
     
-    project_dir = Path(matches[0])
+    project_dir = Path(project['path'])
     config_file = project_dir / f'{config_type}.yaml'
     
     if not config_file.exists():

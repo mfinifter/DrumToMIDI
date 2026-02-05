@@ -30,6 +30,7 @@ from webui.api.upload import upload_bp
 from webui.api.job_status import jobs_bp
 from webui.api.downloads import downloads_bp
 from webui.api.config import config_bp
+from webui.api.settings import settings_bp
 
 
 def create_app(config_name=None):
@@ -66,6 +67,7 @@ def create_app(config_name=None):
     app.register_blueprint(jobs_bp)
     app.register_blueprint(downloads_bp)
     app.register_blueprint(config_bp)
+    app.register_blueprint(settings_bp)
     
     # Initialize job queue
     get_job_queue()

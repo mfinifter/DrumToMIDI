@@ -135,7 +135,6 @@ def test_project(temp_user_files: Path, synthetic_audio: np.ndarray, sample_rate
     
     # Copy config files
     root_dir = Path(__file__).parent
-    shutil.copy(root_dir / "config.yaml", project_dir / "config.yaml")
     shutil.copy(root_dir / "midiconfig.yaml", project_dir / "midiconfig.yaml")
     
     return {
@@ -275,7 +274,7 @@ class TestStemsToMidi:
     
     def test_midi_file_created(self, test_project_with_stems: Dict[str, Any], drum_mapping):
         """Integration test: MIDI file is created from stems."""
-        from stems_to_midi.processor import process_stem_to_midi
+        from stems_to_midi.processing_shell import process_stem_to_midi
         from stems_to_midi.midi import create_midi_file
         import yaml
         
@@ -297,7 +296,7 @@ class TestStemsToMidi:
         
         # Process kick stem
         kick_path = stems_dir / "test_song-kick.wav"
-        notes = process_stem_to_midi(
+        result = process_stem_to_midi(
             kick_path,
             stem_type='kick',
             drum_mapping=drum_mapping,
@@ -309,6 +308,7 @@ class TestStemsToMidi:
             min_velocity=40,
             max_velocity=127
         )
+        notes = result['events']
         
         # Notes should be detected (we put 2 kick hits in synthetic stems)
         assert len(notes) >= 1  # At least some notes detected
@@ -326,7 +326,7 @@ class TestStemsToMidi:
     
     def test_multiple_stems_combined(self, test_project_with_stems: Dict[str, Any], drum_mapping):
         """Integration test: multiple stems produce combined MIDI."""
-        from stems_to_midi.processor import process_stem_to_midi
+        from stems_to_midi.processing_shell import process_stem_to_midi
         from stems_to_midi.midi import create_midi_file
         import yaml
         
@@ -349,7 +349,7 @@ class TestStemsToMidi:
         for stem_type in ['kick', 'snare', 'hihat']:
             stem_path = stems_dir / f"test_song-{stem_type}.wav"
             if stem_path.exists():
-                notes = process_stem_to_midi(
+                result = process_stem_to_midi(
                     stem_path,
                     stem_type=stem_type,
                     drum_mapping=drum_mapping,
@@ -361,6 +361,7 @@ class TestStemsToMidi:
                     min_velocity=40,
                     max_velocity=127
                 )
+                notes = result['events']
                 if notes:
                     events_by_stem[stem_type] = notes
         
@@ -388,7 +389,7 @@ class TestVideoRendering:
         from midi_types import STANDARD_GM_DRUM_MAP
         
         # First create a MIDI file
-        from stems_to_midi.processor import process_stem_to_midi
+        from stems_to_midi.processing_shell import process_stem_to_midi
         from stems_to_midi.midi import create_midi_file
         import yaml
         
@@ -409,7 +410,7 @@ class TestVideoRendering:
         
         # Generate MIDI from kick stem
         kick_path = stems_dir / "test_song-kick.wav"
-        notes = process_stem_to_midi(
+        result = process_stem_to_midi(
             kick_path,
             stem_type='kick',
             drum_mapping=drum_mapping,
@@ -421,6 +422,7 @@ class TestVideoRendering:
             min_velocity=40,
             max_velocity=127
         )
+        notes = result['events']
         
         midi_path = midi_dir / "test_song.mid"
         create_midi_file({'kick': notes}, str(midi_path), tempo=120.0)
@@ -438,7 +440,7 @@ class TestVideoRendering:
     def test_frame_rendering(self, test_project_with_stems: Dict[str, Any], drum_mapping):
         """Test that video frames can be rendered."""
         from render_midi_video_shell import MidiVideoRenderer
-        from stems_to_midi.processor import process_stem_to_midi
+        from stems_to_midi.processing_shell import process_stem_to_midi
         from stems_to_midi.midi import create_midi_file
         import yaml
         
@@ -458,7 +460,7 @@ class TestVideoRendering:
         hop_length = onset_params.get('hop_length', 512)
         
         kick_path = stems_dir / "test_song-kick.wav"
-        notes = process_stem_to_midi(
+        result = process_stem_to_midi(
             kick_path,
             stem_type='kick',
             drum_mapping=drum_mapping,
@@ -470,6 +472,7 @@ class TestVideoRendering:
             min_velocity=40,
             max_velocity=127
         )
+        notes = result['events']
         
         midi_path = midi_dir / "test_song.mid"
         create_midi_file({'kick': notes}, str(midi_path), tempo=120.0)
@@ -498,7 +501,7 @@ class TestFullPipeline:
         This is the primary integration test to verify refactoring doesn't break
         the main workflow.
         """
-        from stems_to_midi.processor import process_stem_to_midi
+        from stems_to_midi.processing_shell import process_stem_to_midi
         from stems_to_midi.midi import create_midi_file
         from render_midi_video_shell import MidiVideoRenderer
         import yaml
@@ -525,7 +528,7 @@ class TestFullPipeline:
         for stem_type in ['kick', 'snare', 'hihat']:
             stem_path = stems_dir / f"test_song-{stem_type}.wav"
             if stem_path.exists():
-                notes = process_stem_to_midi(
+                result = process_stem_to_midi(
                     stem_path,
                     stem_type=stem_type,
                     drum_mapping=drum_mapping,
@@ -537,6 +540,7 @@ class TestFullPipeline:
                     min_velocity=40,
                     max_velocity=127
                 )
+                notes = result['events']
                 if notes:
                     events_by_stem[stem_type] = notes
         
@@ -569,7 +573,7 @@ class TestFullPipeline:
         This tests sidechain_shell.py which has 0% coverage.
         """
         from sidechain_shell import sidechain_compress
-        from stems_to_midi.processor import process_stem_to_midi
+        from stems_to_midi.processing_shell import process_stem_to_midi
         from stems_to_midi.midi import create_midi_file
         import yaml
         import soundfile as sf
