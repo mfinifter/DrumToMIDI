@@ -1317,6 +1317,93 @@ def classify_snare_pitch(pitches: np.ndarray) -> np.ndarray:
 # ONSET FILTERING AND ANALYSIS (Pure Functions)
 # ============================================================================
 
+def mark_reverb_continuations(
+    onset_data_list: List[Dict],
+    time_margin_ms: float = 5.0,
+    amplitude_margin: float = 0.001,
+    attack_sharpness_threshold: float = 0.2
+) -> List[Dict]:
+    """
+    Mark reverb continuation events in onset data.
+    
+    Reverb continuations are artifacts where peak-hold detection splits
+    a single decay envelope into multiple events. Characteristics:
+    - Next event starts exactly when previous ends (within time_margin_ms)
+    - Amplitude continuity: start matches previous end (within amplitude_margin)
+    - Amplitude decreases (decay pattern)
+    - Low attack sharpness (< 0.2): reverb tails have smooth envelopes, not sharp attacks
+    
+    These events are marked as 'REVERB_CONTINUATION' status to preserve
+    data while allowing MIDI export to filter them.
+    
+    Pure function - modifies input list in place but returns it for chaining.
+    
+    Args:
+        onset_data_list: List of onset dicts (must have time, duration_sec, 
+                        amplitude, amplitude_at_start, amplitude_at_end, 
+                        attack_sharpness, status)
+        time_margin_ms: Maximum gap between events (default 5ms)
+        amplitude_margin: Maximum amplitude difference (default 0.001)
+        attack_sharpness_threshold: Minimum attack sharpness for real hits (default 0.2)
+    
+    Returns:
+        Modified onset_data_list with 'REVERB_CONTINUATION' status set
+    """
+    if len(onset_data_list) < 2:
+        return onset_data_list
+    
+    # Sort by time to ensure sequential processing
+    onset_data_list.sort(key=lambda e: e['time'])
+    
+    time_margin_sec = time_margin_ms / 1000.0
+    
+    for i in range(1, len(onset_data_list)):
+        prev = onset_data_list[i - 1]
+        curr = onset_data_list[i]
+        
+        # Skip if current event already rejected, or if previous is rejected
+        # (but allow previous to be REVERB_CONTINUATION to catch full decay chains)
+        if curr.get('status') != 'KEPT':
+            continue
+        if prev.get('status') not in ('KEPT', 'REVERB_CONTINUATION'):
+            continue
+        
+        # Check required fields exist
+        if ('duration_sec' not in prev or 'amplitude_at_end' not in prev or 
+            'amplitude_at_start' not in curr or 'amplitude' not in prev or 
+            'amplitude' not in curr):
+            continue
+        
+        # Calculate timing
+        prev_end_time = prev['time'] + prev['duration_sec']
+        gap = curr['time'] - prev_end_time
+        
+        # Check continuation conditions
+        is_adjacent = abs(gap) <= time_margin_sec
+        
+        # Amplitude continuity
+        prev_end_amp = prev['amplitude_at_end']
+        curr_start_amp = curr['amplitude_at_start']
+        amp_diff = abs(curr_start_amp - prev_end_amp)
+        is_amplitude_continuous = amp_diff <= amplitude_margin
+        
+        # Amplitude decay (use peak amplitude instead of velocity)
+        is_decaying = curr['amplitude'] < prev['amplitude']
+        
+        # Attack sharpness check - real hits have sharp attacks (>= threshold)
+        # Reverb tails have smooth envelopes (< threshold)
+        curr_attack_sharpness = curr.get('attack_sharpness')
+        is_smooth_envelope = (curr_attack_sharpness is not None and 
+                             curr_attack_sharpness < attack_sharpness_threshold)
+        
+        # Mark as reverb continuation if all conditions met
+        # Skip if attack is sharp (indicates real transient, not reverb tail)
+        if is_adjacent and is_amplitude_continuous and is_decaying and is_smooth_envelope:
+            curr['status'] = 'REVERB_CONTINUATION'
+    
+    return onset_data_list
+
+
 def filter_onsets_by_spectral(
     onset_times: np.ndarray,
     onset_strengths: np.ndarray,
@@ -1713,6 +1800,31 @@ def filter_onsets_by_spectral(
             'data': decay_analysis_data,
             'window_sec': decay_filter_window_sec
         }
+    
+    # Mark reverb continuation events (peak-hold detection artifact filtering)
+    # These are kept in the data but marked so MIDI export can filter them
+    # Uses attack_sharpness to distinguish real hits from reverb tails
+    all_onset_data = mark_reverb_continuations(
+        all_onset_data,
+        time_margin_ms=5.0,
+        amplitude_margin=0.001,
+        attack_sharpness_threshold=0.2  # Real hits have sharper attacks (>= 0.2)
+    )
+    
+    # Remove reverb continuations from filtered lists so they don't become MIDI notes
+    reverb_times = {e['time'] for e in all_onset_data if e.get('status') == 'REVERB_CONTINUATION'}
+    if reverb_times:
+        # Filter out reverb continuations from all filtered arrays
+        keep_indices = [i for i, t in enumerate(filtered_times) if t not in reverb_times]
+        filtered_times = [filtered_times[i] for i in keep_indices]
+        filtered_strengths = [filtered_strengths[i] for i in keep_indices]
+        filtered_amplitudes = [filtered_amplitudes[i] for i in keep_indices]
+        filtered_geomeans = [filtered_geomeans[i] for i in keep_indices]
+        if filtered_sustains:
+            filtered_sustains = [filtered_sustains[i] for i in keep_indices if i < len(filtered_sustains)]
+        if filtered_spectral:
+            filtered_spectral = [filtered_spectral[i] for i in keep_indices if i < len(filtered_spectral)]
+        filtered_onset_data = [d for d in filtered_onset_data if d['time'] not in reverb_times]
     
     return {
         'filtered_times': np.array(filtered_times),
