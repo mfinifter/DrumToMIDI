@@ -8,6 +8,10 @@ audio:
   silence_threshold: 0.001   # Amplitude threshold for silence detection (-60dB)
   min_segment_length: 512    # Minimum audio segment length for analysis (samples)
   
+  # Amplitude normalization (NEW - helps with quiet recordings)
+  normalize_amplitude: false  # Normalize audio amplitude before spectral analysis (global default)
+  target_amplitude: 0.8       # Target peak amplitude for normalization (0-1 range)
+  
   # Peak amplitude detection
   peak_window_sec: 0.10      # Window size for peak detection (seconds)
   
@@ -196,6 +200,9 @@ hihat:
   
   # Stereo processing
   use_stereo: true  # Hi-hat may be off-center, use stereo for better detection
+  
+  # Amplitude normalization (helps with quiet hihat recordings)
+  normalize_amplitude: true   # Override global setting - hihats benefit most from normalization
   
   # Clustering configuration
   onset_merge_window_ms: 100  # Merge L/R onsets within this window (ms)

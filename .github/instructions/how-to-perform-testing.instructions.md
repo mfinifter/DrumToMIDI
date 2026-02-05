@@ -1,14 +1,25 @@
 ---
 applyTo: '**'
 ---
-When testing, once you're sure the docker container is running and stable, use the following commands to run tests inside the container:
+When testing, use platform-appropriate commands:
 
 ## Quick Test Commands
 
-**Run all tests with coverage (recommended):**
+**Mac (Native conda setup - recommended):**
+```bash
+conda activate drumtomidi
+pytest
+```
+
+**Docker (Windows/Linux or Mac without native setup):**
 ```bash
 docker exec -it DrumToMIDI-midi bash -c "cd /app && pytest"
 ```
+
+**Platform detection:** Check `uname -s` output:
+- `Darwin` = macOS → use conda
+- `Linux` = Linux → likely Docker (check if `/app` exists)
+- Otherwise → use Docker
 
 Find test files by searching for `import pytest`.
 

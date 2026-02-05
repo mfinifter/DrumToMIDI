@@ -174,9 +174,9 @@ class TestGetSpectralConfigForStem:
         assert result['freq_ranges']['secondary'] == (80, 150)
         assert result['freq_ranges']['tertiary'] == (2000, 6000)
         assert result['geomean_threshold'] == 150.0
-        assert result['energy_labels']['primary'] == 'FundE'
-        assert result['energy_labels']['secondary'] == 'BodyE'
-        assert result['energy_labels']['tertiary'] == 'AttackE'
+        assert result['energy_labels']['primary'] == 'Primary'
+        assert result['energy_labels']['secondary'] == 'Secondary'
+        assert result['energy_labels']['tertiary'] == 'Tertiary'
     
     def test_snare_config(self):
         """Test snare configuration extraction."""
@@ -195,7 +195,7 @@ class TestGetSpectralConfigForStem:
         result = get_spectral_config_for_stem('snare', config)
         
         assert 'low' in result['freq_ranges']
-        assert result['energy_labels']['secondary'] == 'WireE'
+        assert result['energy_labels']['secondary'] == 'Secondary'
     
     def test_hihat_config(self):
         """Test hihat configuration extraction."""
@@ -212,7 +212,7 @@ class TestGetSpectralConfigForStem:
         
         result = get_spectral_config_for_stem('hihat', config)
         
-        assert result['energy_labels']['secondary'] == 'SizzleE'
+        assert result['energy_labels']['secondary'] == 'Secondary'
         assert result['min_sustain_ms'] == 25
     
     def test_toms_config(self):
@@ -231,8 +231,8 @@ class TestGetSpectralConfigForStem:
         
         assert result['freq_ranges']['primary'] == (60, 120)
         assert result['freq_ranges']['secondary'] == (120, 300)
-        assert result['energy_labels']['primary'] == 'FundE'
-        assert result['energy_labels']['secondary'] == 'BodyE'
+        assert result['energy_labels']['primary'] == 'Primary'
+        assert result['energy_labels']['secondary'] == 'Secondary'
         assert result['geomean_threshold'] == 100.0
     
     def test_cymbals_config(self):
@@ -249,8 +249,8 @@ class TestGetSpectralConfigForStem:
         # Cymbals use hardcoded frequency ranges
         assert result['freq_ranges']['primary'] == (1000, 4000)
         assert result['freq_ranges']['secondary'] == (4000, 10000)
-        assert result['energy_labels']['primary'] == 'BodyE'
-        assert result['energy_labels']['secondary'] == 'BrillE'
+        assert result['energy_labels']['primary'] == 'Primary'
+        assert result['energy_labels']['secondary'] == 'Secondary'
         assert result['geomean_threshold'] == 15.0
         assert result['min_sustain_ms'] == 150
     

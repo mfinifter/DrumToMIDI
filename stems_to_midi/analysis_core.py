@@ -119,6 +119,468 @@ def calculate_sustain_duration(
     return float(sustain_ms)
 
 
+def calculate_event_durations(
+    onset_times: np.ndarray,
+    audio: np.ndarray,
+    sr: int,
+    silence_threshold_db: float = -40.0,
+    skip_attack_ms: float = 20.0
+) -> np.ndarray:
+    """
+    Calculate duration for each onset event.
+    
+    Duration = min(time_to_next_onset, time_to_silence)
+    
+    Pure function - no side effects.
+    
+    Args:
+        onset_times: Array of onset times in seconds
+        audio: Full audio signal (mono)
+        sr: Sample rate
+        silence_threshold_db: dB threshold for silence detection
+        skip_attack_ms: Skip this many ms after onset before checking silence
+                       (allows attack to reach peak before checking decay)
+        
+    Returns:
+        durations: Array of durations in seconds for each onset
+    """
+    if len(onset_times) == 0:
+        return np.array([])
+    
+    durations = np.zeros(len(onset_times))
+    
+    for i, onset_time in enumerate(onset_times):
+        onset_sample = int(onset_time * sr)
+        
+        # Get next onset time (or end of file)
+        if i < len(onset_times) - 1:
+            next_onset_time = onset_times[i + 1]
+        else:
+            next_onset_time = len(audio) / sr
+        
+        # Find silence threshold crossing
+        segment_end = int(next_onset_time * sr)
+        segment = audio[onset_sample:segment_end]
+        
+        # Skip attack period before checking for silence
+        # (onset detection finds START of transient, but peak happens after)
+        skip_samples = int(skip_attack_ms * sr / 1000)
+        
+        # Calculate RMS in small windows (10ms)
+        window_ms = 10
+        window_samples = int(window_ms * sr / 1000)
+        
+        silence_sample = None
+        for j in range(skip_samples, len(segment), window_samples):
+            window = segment[j:j+window_samples]
+            if len(window) == 0:
+                break
+            
+            # Calculate RMS and convert to dB
+            rms = np.sqrt(np.mean(window**2))
+            if rms > 0:
+                rms_db = 20 * np.log10(rms)
+            else:
+                rms_db = -100.0  # Effective silence
+            
+            if rms_db < silence_threshold_db:
+                silence_sample = onset_sample + j
+                break
+        
+        # Duration = whichever comes first: next onset or silence
+        if silence_sample is not None:
+            durations[i] = (silence_sample - onset_sample) / sr
+        else:
+            durations[i] = next_onset_time - onset_time
+    
+    return durations
+
+
+def calculate_amplitude_at_time(
+    audio: np.ndarray,
+    time_sec: float,
+    sr: int,
+    window_ms: float = 5.0
+) -> float:
+    """
+    Calculate amplitude at a specific time using windowed RMS.
+    
+    Pure function - no side effects.
+    
+    Args:
+        audio: Full audio signal (mono)
+        time_sec: Time in seconds to measure amplitude
+        sr: Sample rate
+        window_ms: Window size in milliseconds (centered on time)
+        
+    Returns:
+        RMS amplitude at specified time
+    """
+    sample = int(time_sec * sr)
+    half_window = int(window_ms * sr / 2000)
+    
+    start = max(0, sample - half_window)
+    end = min(len(audio), sample + half_window)
+    
+    if start >= end:
+        return 0.0
+    
+    segment = audio[start:end]
+    return float(np.sqrt(np.mean(segment**2)))
+
+
+def calculate_attack_sharpness(
+    audio: np.ndarray,
+    onset_time: float,
+    duration: float,
+    sr: int,
+    attack_portion: float = 0.3
+) -> float:
+    """
+    Calculate attack sharpness using envelope derivative.
+    
+    Measures how quickly amplitude rises at onset. Sharp transients
+    (kick, snare, clap) have high values. Reverb tails have low values.
+    
+    Pure function - no side effects.
+    
+    Args:
+        audio: Full audio signal (mono)
+        onset_time: Onset time in seconds
+        duration: Event duration in seconds
+        sr: Sample rate
+        attack_portion: Fraction of duration to analyze (default 30%)
+        
+    Returns:
+        Attack sharpness (max derivative of envelope)
+    """
+    onset_sample = int(onset_time * sr)
+    attack_samples = int(duration * attack_portion * sr)
+    
+    if attack_samples < 10:
+        return 0.0
+    
+    end_sample = min(len(audio), onset_sample + attack_samples)
+    segment = audio[onset_sample:end_sample]
+    
+    if len(segment) < 10:
+        return 0.0
+    
+    # Calculate envelope (absolute value with smoothing)
+    envelope = np.abs(segment)
+    
+    # Smooth with small kernel (1ms)
+    kernel_size = max(3, int(sr / 1000))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    kernel = np.ones(kernel_size) / kernel_size
+    envelope = np.convolve(envelope, kernel, mode='same')
+    
+    # Calculate derivative
+    derivative = np.diff(envelope)
+    
+    # Return max derivative (steepest rise)
+    return float(np.max(derivative)) if len(derivative) > 0 else 0.0
+
+
+def calculate_envelope_continuity(
+    audio: np.ndarray,
+    onset_time: float,
+    duration: float,
+    sr: int,
+    gap_threshold: float = 0.1
+) -> float:
+    """
+    Calculate envelope continuity (detect gaps/dropouts).
+    
+    Real hits have continuous energy. Reverb tails often have gaps.
+    
+    Pure function - no side effects.
+    
+    Args:
+        audio: Full audio signal (mono)
+        onset_time: Onset time in seconds
+        duration: Event duration in seconds
+        sr: Sample rate
+        gap_threshold: Relative amplitude threshold for gap detection
+        
+    Returns:
+        Continuity score (0-1, higher = more continuous)
+    """
+    onset_sample = int(onset_time * sr)
+    duration_samples = int(duration * sr)
+    
+    if duration_samples < 10:
+        return 1.0  # Too short to have gaps
+    
+    end_sample = min(len(audio), onset_sample + duration_samples)
+    segment = audio[onset_sample:end_sample]
+    
+    if len(segment) < 10:
+        return 1.0
+    
+    # Calculate envelope
+    envelope = np.abs(segment)
+    
+    # Smooth with small window
+    window_size = max(3, int(sr / 200))  # 5ms
+    if window_size % 2 == 0:
+        window_size += 1
+    kernel = np.ones(window_size) / window_size
+    envelope = np.convolve(envelope, kernel, mode='same')
+    
+    # Find peak amplitude
+    peak = np.max(envelope)
+    if peak == 0:
+        return 1.0
+    
+    # Count samples above threshold
+    threshold = peak * gap_threshold
+    above_threshold = envelope > threshold
+    continuity = float(np.mean(above_threshold))
+    
+    return continuity
+
+
+def calculate_peak_prominence(
+    audio: np.ndarray,
+    onset_time: float,
+    sr: int,
+    window_before_ms: float = 20.0,
+    window_after_ms: float = 20.0
+) -> float:
+    """
+    Calculate how prominent the peak is relative to surroundings.
+    
+    Real drum hits stand out from background. Artifacts blend in.
+    
+    Pure function - no side effects.
+    
+    Args:
+        audio: Full audio signal (mono)
+        onset_time: Onset time in seconds
+        sr: Sample rate
+        window_before_ms: Look-back window in milliseconds
+        window_after_ms: Look-ahead window in milliseconds
+        
+    Returns:
+        Prominence ratio (peak / mean_surroundings)
+    """
+    onset_sample = int(onset_time * sr)
+    before_samples = int(window_before_ms * sr / 1000)
+    after_samples = int(window_after_ms * sr / 1000)
+    
+    # Get peak amplitude at onset
+    peak_window = int(5 * sr / 1000)  # 5ms around peak
+    peak_start = max(0, onset_sample - peak_window // 2)
+    peak_end = min(len(audio), onset_sample + peak_window // 2)
+    peak_amp = np.max(np.abs(audio[peak_start:peak_end]))
+    
+    # Get surrounding amplitude
+    before_start = max(0, onset_sample - before_samples)
+    before_end = onset_sample
+    after_start = onset_sample + peak_window
+    after_end = min(len(audio), onset_sample + after_samples)
+    
+    surroundings = np.concatenate([
+        audio[before_start:before_end],
+        audio[after_start:after_end]
+    ])
+    
+    if len(surroundings) == 0:
+        return 1.0
+    
+    mean_surround = np.mean(np.abs(surroundings))
+    
+    if mean_surround == 0:
+        return 100.0 if peak_amp > 0 else 1.0
+    
+    return float(peak_amp / mean_surround)
+
+
+def calculate_spectral_centroid(
+    audio: np.ndarray,
+    onset_time: float,
+    sr: int,
+    window_ms: float = 50.0
+) -> float:
+    """
+    Calculate spectral centroid (brightness) of event.
+    
+    Higher values = brighter sound (cymbals, hi-hat).
+    Lower values = darker sound (kick, toms).
+    
+    Pure function - no side effects.
+    
+    Args:
+        audio: Full audio signal (mono)
+        onset_time: Onset time in seconds
+        sr: Sample rate
+        window_ms: Analysis window in milliseconds
+        
+    Returns:
+        Spectral centroid in Hz
+    """
+    onset_sample = int(onset_time * sr)
+    window_samples = int(window_ms * sr / 1000)
+    
+    start = onset_sample
+    end = min(len(audio), onset_sample + window_samples)
+    segment = audio[start:end]
+    
+    if len(segment) < 100:
+        return 0.0
+    
+    # Compute FFT
+    fft = np.fft.rfft(segment)
+    freqs = np.fft.rfftfreq(len(segment), 1/sr)
+    magnitude = np.abs(fft)
+    
+    # Calculate centroid
+    if np.sum(magnitude) == 0:
+        return 0.0
+    
+    centroid = float(np.sum(freqs * magnitude) / np.sum(magnitude))
+    return centroid
+
+
+def calculate_spectral_flux(
+    audio: np.ndarray,
+    onset_time: float,
+    sr: int,
+    window_ms: float = 50.0
+) -> float:
+    """
+    Calculate spectral flux (rate of timbre change).
+    
+    Higher values = rapidly changing timbre (transients).
+    Lower values = stable timbre (sustained notes, reverb).
+    
+    Pure function - no side effects.
+    
+    Args:
+        audio: Full audio signal (mono)
+        onset_time: Onset time in seconds
+        sr: Sample rate
+        window_ms: Analysis window in milliseconds
+        
+    Returns:
+        Spectral flux (sum of spectral differences)
+    """
+    onset_sample = int(onset_time * sr)
+    window_samples = int(window_ms * sr / 1000)
+    
+    start = onset_sample
+    end = min(len(audio), onset_sample + window_samples)
+    segment = audio[start:end]
+    
+    if len(segment) < 200:
+        return 0.0
+    
+    # Split into two halves
+    mid = len(segment) // 2
+    first_half = segment[:mid]
+    second_half = segment[mid:]
+    
+    # Compute FFT for each half
+    fft1 = np.abs(np.fft.rfft(first_half))
+    fft2 = np.abs(np.fft.rfft(second_half))
+    
+    # Normalize
+    if np.sum(fft1) > 0:
+        fft1 = fft1 / np.sum(fft1)
+    if np.sum(fft2) > 0:
+        fft2 = fft2 / np.sum(fft2)
+    
+    # Calculate flux (difference between spectra)
+    min_len = min(len(fft1), len(fft2))
+    flux = float(np.sum(np.abs(fft2[:min_len] - fft1[:min_len])))
+    
+    return flux
+
+
+def detect_pitch(
+    audio: np.ndarray,
+    onset_time: float,
+    sr: int,
+    window_ms: float = 50.0,
+    fmin: float = 50.0,
+    fmax: float = 2000.0
+) -> Optional[float]:
+    """
+    Detect fundamental pitch using librosa's pyin algorithm.
+    
+    Pure function - no side effects.
+    
+    Args:
+        audio: Full audio signal (mono)
+        onset_time: Onset time in seconds
+        sr: Sample rate
+        window_ms: Analysis window in milliseconds
+        fmin: Minimum frequency to detect (Hz)
+        fmax: Maximum frequency to detect (Hz)
+        
+    Returns:
+        Detected pitch in Hz, or None if no pitch detected
+    """
+    import librosa
+    
+    onset_sample = int(onset_time * sr)
+    window_samples = int(window_ms * sr / 1000)
+    
+    start = onset_sample
+    end = min(len(audio), onset_sample + window_samples)
+    segment = audio[start:end]
+    
+    if len(segment) < 512:
+        return None
+    
+    try:
+        # Use pyin for pitch detection
+        f0, voiced_flag, voiced_probs = librosa.pyin(
+            segment,
+            fmin=fmin,
+            fmax=fmax,
+            sr=sr,
+            frame_length=512
+        )
+        
+        # Filter out unvoiced frames and NaN values
+        valid_pitches = f0[~np.isnan(f0)]
+        
+        if len(valid_pitches) == 0:
+            return None
+        
+        # Return median pitch
+        return float(np.median(valid_pitches))
+    except Exception:
+        return None
+
+
+def calculate_gap_from_previous(
+    onset_time: float,
+    previous_onset_time: Optional[float]
+) -> Optional[float]:
+    """
+    Calculate time gap since previous onset.
+    
+    Short gaps suggest real rhythm. Long gaps may indicate artifacts.
+    
+    Pure function - no side effects.
+    
+    Args:
+        onset_time: Current onset time in seconds
+        previous_onset_time: Previous onset time in seconds (or None)
+        
+    Returns:
+        Gap in seconds, or None if no previous onset
+    """
+    if previous_onset_time is None:
+        return None
+    
+    return float(onset_time - previous_onset_time)
+
+
 def calculate_spectral_energies(
     segment: np.ndarray,
     sr: int,
@@ -276,8 +738,8 @@ def get_spectral_config_for_stem(stem_type: str, config: Dict) -> Dict:
                 'secondary': (stem_config['wire_freq_min'], stem_config['wire_freq_max'])
             },
             'energy_labels': {
-                'primary': 'BodyE',
-                'secondary': 'WireE'
+                'primary': 'Primary',
+                'secondary': 'Secondary'
             },
             'geomean_threshold': stem_config.get('geomean_threshold'),
             'min_sustain_ms': None,
@@ -292,9 +754,9 @@ def get_spectral_config_for_stem(stem_type: str, config: Dict) -> Dict:
                 'tertiary': (stem_config['attack_freq_min'], stem_config['attack_freq_max'])
             },
             'energy_labels': {
-                'primary': 'FundE',
-                'secondary': 'BodyE',
-                'tertiary': 'AttackE'
+                'primary': 'Primary',
+                'secondary': 'Secondary',
+                'tertiary': 'Tertiary'
             },
             'geomean_threshold': stem_config.get('geomean_threshold'),
             'min_sustain_ms': None,
@@ -308,8 +770,8 @@ def get_spectral_config_for_stem(stem_type: str, config: Dict) -> Dict:
                 'secondary': (stem_config['body_freq_min'], stem_config['body_freq_max'])
             },
             'energy_labels': {
-                'primary': 'FundE',
-                'secondary': 'BodyE'
+                'primary': 'Primary',
+                'secondary': 'Secondary'
             },
             'geomean_threshold': stem_config.get('geomean_threshold'),
             'min_sustain_ms': None,
@@ -323,8 +785,8 @@ def get_spectral_config_for_stem(stem_type: str, config: Dict) -> Dict:
                 'secondary': (stem_config['sizzle_freq_min'], stem_config['sizzle_freq_max'])
             },
             'energy_labels': {
-                'primary': 'BodyE',
-                'secondary': 'SizzleE'
+                'primary': 'Primary',
+                'secondary': 'Secondary'
             },
             'geomean_threshold': stem_config.get('geomean_threshold'),
             'min_sustain_ms': stem_config.get('min_sustain_ms', 25),
@@ -338,8 +800,8 @@ def get_spectral_config_for_stem(stem_type: str, config: Dict) -> Dict:
                 'secondary': (stem_config.get('brilliance_freq_min', 4000), stem_config.get('brilliance_freq_max', 10000))
             },
             'energy_labels': {
-                'primary': 'BodyE',
-                'secondary': 'BrillE'
+                'primary': 'Primary',
+                'secondary': 'Secondary'
             },
             'geomean_threshold': stem_config.get('geomean_threshold'),
             'min_sustain_ms': stem_config.get('min_sustain_ms', 150),
@@ -377,7 +839,7 @@ def calculate_statistical_params(onset_data_list: List[Dict]) -> Dict[str, float
     Analyze full dataset of onsets to compute normalization parameters.
     
     Used for statistical outlier detection to identify snare bleed in kicks
-    by comparing FundE/BodyE ratio and total energy against dataset medians.
+    by comparing Primary/Secondary ratio and total energy against dataset medians.
     
     Pure function - no side effects.
     
@@ -387,7 +849,7 @@ def calculate_statistical_params(onset_data_list: List[Dict]) -> Dict[str, float
     
     Returns:
         Dict with median and spread values:
-        - median_ratio: Median FundE/BodyE ratio across all events
+        - median_ratio: Median Primary/Secondary ratio across all events
         - median_total: Median total energy across all events
         - ratio_spread: Standard deviation of ratios
         - total_spread: Standard deviation of total energies
@@ -405,7 +867,7 @@ def calculate_statistical_params(onset_data_list: List[Dict]) -> Dict[str, float
     secondary_energies = np.array([d['secondary_energy'] for d in onset_data_list])
     total_energies = np.array([d['total_energy'] for d in onset_data_list])
     
-    # Calculate FundE/BodyE ratios (with safety for division by zero)
+    # Calculate Primary/Secondary ratios (with safety for division by zero)
     ratios = primary_energies / np.maximum(secondary_energies, 1e-9)
     
     params = {
@@ -434,7 +896,7 @@ def calculate_badness_score(
     Compute normalized badness score for a single onset.
     
     Measures how much an onset deviates from typical kicks in the dataset.
-    Snare bleed typically has lower FundE/BodyE ratio and different total energy.
+    Snare bleed typically has lower Primary/Secondary ratio and different total energy.
     
     Pure function - no side effects.
     
@@ -859,7 +1321,8 @@ def filter_onsets_by_spectral(
     sr: int,
     stem_type: str,
     config: Dict,
-    learning_mode: bool = False
+    learning_mode: bool = False,
+    durations: Optional[np.ndarray] = None
 ) -> Dict:
     """
     Filter onsets by spectral content and analyze each onset.
@@ -881,6 +1344,8 @@ def filter_onsets_by_spectral(
         stem_type: Type of stem ('kick', 'snare', etc.)
         config: Configuration dictionary
         learning_mode: If True, keep all onsets (don't filter)
+        durations: Optional array of event durations in seconds. If provided,
+                  passed to analyze_onset_spectral for Phase 2 metadata.
     
     Returns:
         Dictionary with:
@@ -925,9 +1390,13 @@ def filter_onsets_by_spectral(
     # Store raw spectral data for ALL onsets (for debug output)
     all_onset_data = []
     
-    for onset_time, strength, peak_amplitude in zip(onset_times, onset_strengths, peak_amplitudes):
-        # Use unified spectral analysis helper
-        analysis = analyze_onset_spectral(audio, onset_time, sr, stem_type, config)
+    # Handle optional durations parameter (backward compatibility)
+    if durations is None:
+        durations = [None] * len(onset_times)
+    
+    for onset_time, strength, peak_amplitude, duration in zip(onset_times, onset_strengths, peak_amplitudes, durations):
+        # Use unified spectral analysis helper (now with duration)
+        analysis = analyze_onset_spectral(audio, onset_time, sr, stem_type, config, duration=duration)
         
         if analysis is None:
             # Segment too short, skip
@@ -942,6 +1411,40 @@ def filter_onsets_by_spectral(
         body_wire_geomean = analysis['geomean']
         sustain_duration = analysis['sustain_ms']
         spectral_ratio = analysis['spectral_ratio']
+        
+        # Phase 2: Calculate extended metadata (if duration available)
+        amplitude_at_start = None
+        amplitude_at_end = None
+        attack_sharpness = None
+        envelope_continuity = None
+        peak_prominence = None
+        spectral_centroid_hz = None
+        spectral_flux_value = None
+        detected_pitch = None
+        gap_from_previous = None
+        
+        if duration is not None:
+            # Amplitude at start and end
+            amplitude_at_start = calculate_amplitude_at_time(audio, onset_time, sr, window_ms=5.0)
+            amplitude_at_end = calculate_amplitude_at_time(audio, onset_time + duration, sr, window_ms=5.0)
+            
+            # Attack characteristics
+            attack_sharpness = calculate_attack_sharpness(audio, onset_time, duration, sr)
+            envelope_continuity = calculate_envelope_continuity(audio, onset_time, duration, sr)
+            
+            # Peak prominence
+            peak_prominence = calculate_peak_prominence(audio, onset_time, sr)
+            
+            # Spectral features
+            spectral_centroid_hz = calculate_spectral_centroid(audio, onset_time, sr)
+            spectral_flux_value = calculate_spectral_flux(audio, onset_time, sr)
+            
+            # Pitch detection (optional, can be slow)
+            # detected_pitch = detect_pitch(audio, onset_time, sr)
+            
+            # Gap from previous onset
+            if len(filtered_times) > 0:
+                gap_from_previous = calculate_gap_from_previous(onset_time, filtered_times[-1])
         
         # Determine if this onset should be kept
         is_real_hit = should_keep_onset(
@@ -978,6 +1481,28 @@ def filter_onsets_by_spectral(
         
         if sustain_duration is not None:
             onset_data['sustain_ms'] = sustain_duration
+        
+        # Add Phase 2 metadata (if calculated)
+        if duration is not None:
+            onset_data['duration_sec'] = duration
+        if amplitude_at_start is not None:
+            onset_data['amplitude_at_start'] = amplitude_at_start
+        if amplitude_at_end is not None:
+            onset_data['amplitude_at_end'] = amplitude_at_end
+        if attack_sharpness is not None:
+            onset_data['attack_sharpness'] = attack_sharpness
+        if envelope_continuity is not None:
+            onset_data['envelope_continuity'] = envelope_continuity
+        if peak_prominence is not None:
+            onset_data['peak_prominence'] = peak_prominence
+        if spectral_centroid_hz is not None:
+            onset_data['spectral_centroid_hz'] = spectral_centroid_hz
+        if spectral_flux_value is not None:
+            onset_data['spectral_flux'] = spectral_flux_value
+        if detected_pitch is not None:
+            onset_data['pitch_hz'] = detected_pitch
+        if gap_from_previous is not None:
+            onset_data['gap_from_previous_sec'] = gap_from_previous
         
         all_onset_data.append(onset_data)
         
@@ -1111,7 +1636,7 @@ def filter_onsets_by_spectral(
                     onset_data['status'] = 'FILTERED'  # Filtered by decay pass
     
     # THIRD PASS: Statistical outlier detection (kick only, if enabled)
-    # This catches snare bleed that passes geomean threshold but has abnormal FundE/BodyE ratio
+    # This catches snare bleed that passes geomean threshold but has abnormal Primary/Secondary ratio
     
     if stem_type == 'kick' and not learning_mode:
         stem_config = config.get('kick', {})
@@ -1498,7 +2023,8 @@ def analyze_onset_spectral(
     onset_time: float,
     sr: int,
     stem_type: str,
-    config: Dict
+    config: Dict,
+    duration: Optional[float] = None
 ) -> Optional[Dict]:
     """
     Perform complete spectral analysis for a single onset.
@@ -1517,6 +2043,8 @@ def analyze_onset_spectral(
         sr: Sample rate
         stem_type: Type of stem ('kick', 'snare', etc.)
         config: Configuration dictionary
+        duration: Optional event duration in seconds. If provided, stored
+                 in result dict for downstream use in Phase 2 metadata.
     
     Returns:
         Dictionary with analysis results, or None if segment too short:
@@ -1529,7 +2057,8 @@ def analyze_onset_spectral(
             'total_energy': float,
             'geomean': float,
             'sustain_ms': float (if calculated),
-            'spectral_ratio': float (if low_energy available)
+            'spectral_ratio': float (if low_energy available),
+            'duration_sec': float (if duration provided)
         }
     """
     # Convert time to sample
@@ -1603,6 +2132,10 @@ def analyze_onset_spectral(
     # Add tertiary energy if present (kick attack range)
     if tertiary_energy is not None:
         result['tertiary_energy'] = tertiary_energy
+    
+    # Add duration if provided (for Phase 2 metadata enrichment)
+    if duration is not None:
+        result['duration_sec'] = duration
     
     return result
 

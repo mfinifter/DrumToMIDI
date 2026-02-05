@@ -230,6 +230,15 @@ def save_analysis_sidecar(
                     if value is not None:
                         event[field] = _round_value(value, 2)
                 
+                # Add Phase 2 metadata fields (enriched metadata)
+                for field in ['duration_sec', 'amplitude_at_start', 'amplitude_at_end',
+                             'attack_sharpness', 'envelope_continuity', 'peak_prominence',
+                             'spectral_centroid_hz', 'spectral_flux', 'pitch_hz',
+                             'gap_from_previous_sec']:
+                    value = onset_data.get(field)
+                    if value is not None:
+                        event[field] = _round_value(value, 4)
+                
                 # Add MIDI fields for KEPT events (from events_by_stem by index)
                 if event['status'] == 'KEPT':
                     if midi_idx < len(midi_events):
