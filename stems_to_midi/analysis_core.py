@@ -1804,11 +1804,12 @@ def filter_onsets_by_spectral(
     # Mark reverb continuation events (peak-hold detection artifact filtering)
     # These are kept in the data but marked so MIDI export can filter them
     # Uses attack_sharpness to distinguish real hits from reverb tails
+    attack_threshold = config.get('filtering', {}).get('reverb_continuation_attack_threshold', 0.2)
     all_onset_data = mark_reverb_continuations(
         all_onset_data,
         time_margin_ms=5.0,
         amplitude_margin=0.001,
-        attack_sharpness_threshold=0.2  # Real hits have sharper attacks (>= 0.2)
+        attack_sharpness_threshold=attack_threshold  # Real hits have sharper attacks (>= 0.2)
     )
     
     # Remove reverb continuations from filtered lists so they don't become MIDI notes
