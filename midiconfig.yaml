@@ -109,8 +109,17 @@ kick:
   statistical_total_weight: 0.3       # Weight for total energy deviation (0-1)
   
 snare:
-  # Snare drum settings
-  midi_note: 38
+  # MIDI note mappings (General MIDI standard)
+  midi_note: 38               # D1 - Acoustic Snare (default)
+  midi_note_rimshot: 37       # C#1 - Side Stick (Rimshot)
+  midi_note_clap: 39          # D#1 - Hand Clap
+  midi_note_clap_snare: 40    # E1 - Electric Snare (Clap+Snare layered)
+  
+  # Pitch detection for classification (snare/rimshot/clap/clap+snare)
+  enable_pitch_detection: false  # Enable pitch-based classification (experimental)
+  pitch_method: 'yin'            # Pitch detection method: 'yin' or 'pyin'
+  min_pitch_hz: 100.0            # Minimum expected pitch (Hz)
+  max_pitch_hz: 500.0            # Maximum expected pitch (Hz)
   
   # Stereo processing
   use_stereo: true  # Ghost notes and rimshots may be panned, use stereo analysis
@@ -197,10 +206,11 @@ toms:
   body_freq_max: 400             # End of body/attack range
   
 hihat:
-  # Hi-hat settings
+  # MIDI note mappings (General MIDI standard)
   midi_note_closed: 42       # F#1 - Closed hi-hat
   midi_note_open: 46         # A#1 - Open hi-hat
   midi_note_foot_close: 44   # G#1 - Foot close (pedal closes open hihat)
+  midi_note_handclap: 39     # D#1 - Hand Clap (detected from hihat bleed)
   midi_note: 42              # Default (closed) for backward compatibility
   
   # Stereo processing
@@ -256,8 +266,11 @@ hihat:
   sizzle_freq_max: 12000     # End of sizzle range
   
 cymbals:
-  # Crash/ride cymbal settings
-  midi_note: 57              # GM: 49=Crash 1 (left), 57=Crash 2 (right)
+  # MIDI note mappings (General MIDI standard)
+  midi_note: 57              # Default: Crash 2 (right) for backward compatibility
+  midi_note_crash: 49        # C#2 - Crash Cymbal 1
+  midi_note_ride: 51         # D#2 - Ride Cymbal 1
+  midi_note_chinese: 52      # E2 - Chinese Cymbal
   
   # Stereo processing
   use_stereo: true  # Cymbals are often panned left/right, use stereo for crash/ride distinction

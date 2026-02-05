@@ -11,6 +11,43 @@ Bugs are now tracked in GitHub Issues: https://github.com/EverlastEngineering/Dr
 
 ## Open Bugs (Not Yet in GitHub)
 
+### Missing MIDI note mappings in config for multi-type classification
+- **Status**: Open
+- **Priority**: High
+- **Description**: Code supports multiple MIDI notes per stem type (snare: 4 types, cymbal: 3 types) but config only exposes single `midi_note` field
+- **Details**:
+  - **Snare**: Code classifies into 4 types but config only has `midi_note: 38`
+    - Snare (38), Rimshot (37), Clap (39), Clap+Snare (40) - hardcoded in `DrumMapping`
+    - Config should expose: `midi_note_rimshot`, `midi_note_clap`, `midi_note_clap_snare`
+  - **Cymbals**: Code classifies into 3 types but config only has `midi_note: 57`
+    - Crash (49), Ride (51), Chinese (52) - hardcoded in `DrumMapping`
+    - Config should expose: `midi_note_crash`, `midi_note_ride`, `midi_note_chinese`
+  - **Hihat**: Has proper config for closed/open/foot-close, plus handclap (39) hardcoded
+    - Config should expose: `midi_note_handclap`
+  - **Toms**: Properly exposed with `midi_note_low`, `midi_note_mid`, `midi_note_high` ✓
+- **Expected Behavior**: All MIDI note mappings should be configurable via midiconfig.yaml
+- **Actual Behavior**: Most mappings are hardcoded in `stems_to_midi/config.py::DrumMapping`
+- **Impact**: Users cannot customize MIDI note mappings for different drum maps or standards
+- **Suggested Fix**: Add all missing `midi_note_*` fields to midiconfig.yaml snare/cymbals/hihat sections
+
+### Missing stereo width measurement for event classification
+- **Status**: Open
+- **Priority**: Medium
+- **Description**: No measurement of stereo "width" to distinguish mono events (snare) from stereo events (clap)
+- **Details**:
+  - Current metrics: pan_confidence (L/R balance) but not stereo width (L vs R difference)
+  - Stereo width measures how different L and R channels are (phase inversion comparison)
+  - **Mono events**: L≈R (snare, kick) → low width
+  - **Stereo events**: L≠R (handclap, room ambience) → high width
+  - This metric would improve classification accuracy for snare vs clap distinction
+- **Expected Behavior**: Calculate stereo width metric during detection and include in feature set
+- **Actual Behavior**: Only pan position (balance) is measured, not channel difference (width)
+- **Impact**: Cannot distinguish between mono-centered and stereo-centered events
+- **Suggested Implementation**: 
+  - Calculate correlation or RMS difference between L and R channels at onset
+  - Add `stereo_width` field to onset features (range 0.0=mono to 1.0=wide stereo)
+  - Include in clustering features for better classification
+
 ### Missing pan_confidence data in analysis JSON output
 - **Status**: Open
 - **Priority**: Medium
@@ -27,19 +64,16 @@ Bugs are now tracked in GitHub Issues: https://github.com/EverlastEngineering/Dr
 ### Missing pitch data in analysis JSON output  
 - **Status**: Open
 - **Priority**: Medium
-- **Description**: Pitch detection work was implemented but pitch_hz is not populated in analysis JSON output
+- **Description**: Pitch detection is implemented for toms/cymbals/snare but pitch_hz is not saved to analysis JSON
 - **Details**:
-  - `detection_shell.py` has `detect_tom_pitch()` and `detect_cymbal_pitch()` functions using librosa pYIN
-  - Config has 'pitch' listed as a secondary feature for clustering
-  - `midi.py::save_analysis_sidecar()` includes 'pitch_hz' in the field list (line 242)
-  - However, pitch detection functions are not called during normal processing
-- **Expected Behavior**: Pitch should be detected for toms and cymbals and saved to JSON
-- **Actual Behavior**: pitch_hz field exists but remains null/undefined in JSON output
-- **Impact**: Cannot distinguish tom pitches (high/mid/low) or analyze cymbal characteristics
-- **Investigation Needed**: 
-  - Where should pitch detection be called in the processing pipeline?
-  - Should it be per-onset or per-stem?
-  - Performance impact of adding pitch detection?
+  - `detection_shell.py` has pitch detection functions: `detect_tom_pitch()`, `detect_cymbal_pitch()`, `detect_snare_pitch()`
+  - Pitch is used internally for MIDI note classification (tom: low/mid/high, cymbal: crash/ride/chinese, snare: snare/rimshot/clap/clap+snare)
+  - `midi.py::save_analysis_sidecar()` includes 'pitch_hz' in the field list but it's never populated
+  - Snare pitch detection exists but is disabled by default (`enable_pitch_detection: true` required in config)
+- **Expected Behavior**: Pitch should be detected and saved to JSON for all applicable stems
+- **Actual Behavior**: Pitch is detected for classification but not saved to analysis JSON
+- **Impact**: Cannot analyze pitch distribution or validate classification decisions
+- **Root Cause**: Pitch values used for classification are not passed through to the events data structure
 
 ### MIDI file creation error: "pop from empty list" in midiutil
 - **Status**: Fixed
