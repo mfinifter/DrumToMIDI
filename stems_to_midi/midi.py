@@ -13,6 +13,7 @@ from typing import Dict, List, Union, Optional
 
 # Import helper function for event preparation
 from .analysis_core import prepare_midi_events_for_writing
+from .quantize_core import quantize_events
 
 # Import contract for validation
 try:
@@ -80,7 +81,16 @@ def create_midi_file(
     
     # Prepare all events (convert times to beats using pure function)
     prepared_events = prepare_midi_events_for_writing(events_by_stem, tempo)
-    
+
+    # Apply groove quantization if configured
+    quantize_config = config.get('quantize', {})
+    if quantize_config.get('enabled', False):
+        groove_hints = quantize_config.get('groove_hints', [])
+        strength = quantize_config.get('strength', 1.0)
+        if groove_hints:
+            prepared_events = quantize_events(prepared_events, groove_hints, strength)
+            print(f"  Quantized to groove: {', '.join(groove_hints)} (strength={strength})")
+
     # Add all prepared events to MIDI file
     for event in prepared_events:
         midi.addNote(
