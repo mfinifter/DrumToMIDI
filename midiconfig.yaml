@@ -375,6 +375,23 @@ threshold_optimization:
   initial_threshold_step: 0.05  # Initial step size for threshold adjustments
   convergence_patience: 3    # Stop if no improvement for N iterations
 
+# === QUANTIZATION (Groove Hints) ===
+# Snap detected onset times to a rhythmic grid for cleaner MIDI output.
+# Useful for songs with triplet feel, shuffle, or swing that otherwise
+# produce complex non-standard beat positions.
+quantize:
+  enabled: false                    # Set to true to enable quantization
+  groove_hints: []                  # List of groove types to quantize to:
+                                    #   quarter      - quarter notes only
+                                    #   straight_8   - straight 8th notes
+                                    #   straight_16  - straight 16th notes
+                                    #   triplet_8    - 8th note triplets (shuffle/blues/12-8)
+                                    #   triplet_16   - 16th note triplets
+                                    #   swing        - swing feel (same grid as triplet_8)
+                                    # Multiple hints can be combined: [straight_16, triplet_8]
+  strength: 1.0                     # 0.0 = no snap, 1.0 = hard quantize
+                                    # Values in between preserve some human feel
+
 # MIDI Output Settings
 midi:
   min_velocity: 80           # Minimum MIDI velocity (1-127)

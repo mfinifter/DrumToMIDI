@@ -47,7 +47,9 @@ def stems_to_midi_for_project(
     detect_hihat_open: bool = False,
     stems_to_process: List[str] = None,
     max_duration: float = None,
-    learning_mode: bool = False
+    learning_mode: bool = False,
+    groove_hints: List[str] = None,
+    quantize_strength: float = None
 ):
     """
     Convert separated drum stems to MIDI files for a specific project.
@@ -89,6 +91,15 @@ def stems_to_midi_for_project(
         print(f"ERROR: Failed to load config: {e}")
         sys.exit(1)
     
+    # Apply groove hint overrides from CLI
+    if groove_hints:
+        config.setdefault('quantize', {})
+        config['quantize']['enabled'] = True
+        config['quantize']['groove_hints'] = groove_hints
+    if quantize_strength is not None:
+        config.setdefault('quantize', {})
+        config['quantize']['strength'] = quantize_strength
+
     # Use cleaned stems if available, otherwise use regular stems
     stems_source = project_dir / "cleaned"
     if not stems_source.exists() or not any(stems_source.iterdir()):
@@ -372,6 +383,16 @@ MIDI Note Mapping (General MIDI):
                         choices=['kick', 'snare', 'toms', 'hihat', 'cymbals'],
                         help="Specific stems to process (default: all).")
     
+    # Groove quantization arguments
+    groove_group = parser.add_argument_group('Groove Quantization')
+    groove_group.add_argument('--groove', type=str, nargs='+',
+                             choices=['quarter', 'straight_8', 'straight_16',
+                                      'triplet_8', 'triplet_16', 'swing'],
+                             help="Groove hint(s) for quantization. Snaps detected onsets to the "
+                                  "specified rhythmic grid(s). Multiple can be combined.")
+    groove_group.add_argument('--quantize-strength', type=float, default=None,
+                             help="Quantize strength (0.0 = no snap, 1.0 = hard quantize, default: 1.0).")
+
     # Learning mode arguments
     learning_group = parser.add_argument_group('Threshold Learning Mode')
     learning_group.add_argument('--learn', action='store_true',
@@ -393,6 +414,9 @@ MIDI Note Mapping (General MIDI):
         sys.exit(1)
     if args.min_vel > args.max_vel:
         print("ERROR: --min-vel cannot be greater than --max-vel")
+        sys.exit(1)
+    if args.quantize_strength is not None and not (0.0 <= args.quantize_strength <= 1.0):
+        print("ERROR: --quantize-strength must be between 0.0 and 1.0")
         sys.exit(1)
     
     # Select project
@@ -436,5 +460,7 @@ MIDI Note Mapping (General MIDI):
         detect_hihat_open=args.detect_hihat_open,
         stems_to_process=args.stems,
         max_duration=args.maxtime,
-        learning_mode=args.learn
+        learning_mode=args.learn,
+        groove_hints=args.groove,
+        quantize_strength=args.quantize_strength
     )
